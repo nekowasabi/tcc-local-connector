@@ -1,0 +1,5 @@
+ready
+plan
+report_actions accepted
+paused
+resumed

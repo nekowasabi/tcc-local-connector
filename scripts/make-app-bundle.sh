@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+app="$root/dist/TCCLocalConnector.app/Contents"
+rm -rf "$root/dist/TCCLocalConnector.app"
+mkdir -p "$app/MacOS" "$app/Resources"
+go build -o "$app/Resources/tcc-local-connector-backend" "$root/cmd/tcc-local-connector-backend"
+swift build --package-path "$root/macos" -c release
+cp "$root/macos/.build/release/TCCLocalConnector" "$app/MacOS/TCCLocalConnector"
+cp "$root/macos/Resources/Info.plist" "$app/Info.plist"
+codesign --force --sign - "$root/dist/TCCLocalConnector.app"

@@ -1,0 +1,10 @@
+version: 2
+task_source:
+  executable: <YOUR_PATH>
+rules:
+  - id: example
+    match:
+      task_name_contains: [Example]
+    ensure:
+      - type: app.start
+        bundle_id: example.application

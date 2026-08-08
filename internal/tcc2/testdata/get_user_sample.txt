@@ -1,0 +1,3 @@
+- **Timezone:** 05:00
+- **Start of Day:** 05:00:00
+- **Default View ID:** view_aaaaaaaaaaaaaaaaaaaaaaaaaaaa
