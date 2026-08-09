@@ -77,9 +77,10 @@ func TestEngine_TickStartsCycle(t *testing.T) {
 	engine := New(Deps{})
 	engine.cfg = &config.Config{
 		TaskSource: config.TaskSource{Type: "tcc2_mcp", Executable: fake, Args: []string{"mcp"}},
-		Polling:    config.Polling{TimeoutSeconds: 1, FailureGraceSeconds: constants.DefaultFailureGraceSeconds, FailurePolicy: "release_controls", IntervalSeconds: constants.MinPollIntervalSeconds},
-		Logging:    config.Logging{Level: constants.DefaultLogLevel, RetainDays: constants.DefaultLogRetainDays},
-		Rules:      []config.Rule{},
+		// Why: Use the default poll timeout instead of the minimum so process-start latency under the race detector is not mistaken for a fetch failure.
+		Polling: config.Polling{TimeoutSeconds: constants.DefaultPollTimeoutSeconds, FailureGraceSeconds: constants.DefaultFailureGraceSeconds, FailurePolicy: "release_controls", IntervalSeconds: constants.MinPollIntervalSeconds},
+		Logging: config.Logging{Level: constants.DefaultLogLevel, RetainDays: constants.DefaultLogRetainDays},
+		Rules:   []config.Rule{},
 	}
 	engine.status.RunningTasks = []TaskView{{Name: "seed", TaskID: "task_1234567890abcdef1234567890abcdef", Date: "2026-08-07"}}
 	if _, err := engine.RunCycleNow(context.Background()); err != nil {
@@ -98,9 +99,10 @@ func TestEngine_RefreshNow_StartsImmediateCycle(t *testing.T) {
 	engine := New(Deps{})
 	engine.cfg = &config.Config{
 		TaskSource: config.TaskSource{Type: "tcc2_mcp", Executable: fake, Args: []string{"mcp"}},
-		Polling:    config.Polling{TimeoutSeconds: 1, FailureGraceSeconds: constants.DefaultFailureGraceSeconds, FailurePolicy: "release_controls", IntervalSeconds: constants.MinPollIntervalSeconds},
-		Logging:    config.Logging{Level: constants.DefaultLogLevel, RetainDays: constants.DefaultLogRetainDays},
-		Rules:      []config.Rule{},
+		// Why: Use the default poll timeout instead of the minimum so process-start latency under the race detector is not mistaken for a fetch failure.
+		Polling: config.Polling{TimeoutSeconds: constants.DefaultPollTimeoutSeconds, FailureGraceSeconds: constants.DefaultFailureGraceSeconds, FailurePolicy: "release_controls", IntervalSeconds: constants.MinPollIntervalSeconds},
+		Logging: config.Logging{Level: constants.DefaultLogLevel, RetainDays: constants.DefaultLogRetainDays},
+		Rules:   []config.Rule{},
 	}
 	first, err := engine.RunCycleNow(context.Background())
 	if err != nil {
@@ -672,7 +674,9 @@ func TestTenThousandCycles(t *testing.T) {
 func createFakeMCPScript(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "fake-tcc2")
-	script := "#!/bin/sh\nwhile IFS= read -r line; do\n  case \"$line\" in\n    *'\"method\":\"notifications/initialized\"'*) continue ;;\n    *'\"method\":\"initialize\"'*)\n      id=$(printf '%s\\n' \"$line\" | sed -nE 's/.*\"id\":([0-9]+).*/\\1/p')\n      printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"protocolVersion\":\"2025-06-18\",\"serverInfo\":{\"name\":\"fake\"}}}\\n' \"$id\"\n      ;;\n    *'\"name\":\"get_user\"'*)\n      id=$(printf '%s\\n' \"$line\" | sed -nE 's/.*\"id\":([0-9]+).*/\\1/p')\n      printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"- **Timezone:** UTC\\\\n- **Start of Day:** -05:00:00\"}]}}\\n' \"$id\"\n      ;;\n    *'\"name\":\"get_taskchute\"'*)\n      id=$(printf '%s\\n' \"$line\" | sed -nE 's/.*\"id\":([0-9]+).*/\\1/p')\n      printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"## 2026-08-07\\\\n- [Done] Finished\"}]}}\\n' \"$id\"\n      ;;\n  esac\n done\n"
+	// Why: This fixture is executed 10,000 times; fixed per-session IDs avoid
+	// spawning sed for every request and keep the leak test focused on lifecycle.
+	script := "#!/bin/sh\nrequest_id=0\nwhile IFS= read -r line; do\n  case \"$line\" in\n    *'\"method\":\"notifications/initialized\"'*) continue ;;\n  esac\n  request_id=$((request_id + 1))\n  case \"$line\" in\n    *'\"method\":\"initialize\"'*) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"protocolVersion\":\"2025-06-18\",\"serverInfo\":{\"name\":\"fake\"}}}\\n' \"$request_id\" ;;\n    *'\"name\":\"get_user\"'*) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"- **Timezone:** UTC\\\\n- **Start of Day:** -05:00:00\"}]}}\\n' \"$request_id\" ;;\n    *'\"name\":\"get_taskchute\"'*) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"## 2026-08-07\\\\n- [Done] Finished\"}]}}\\n' \"$request_id\" ;;\n  esac\n done\n"
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}

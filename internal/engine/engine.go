@@ -137,6 +137,17 @@ func (e *Engine) detectWake(now time.Time) bool {
 	return wasLate
 }
 func (e *Engine) Snapshot() Status { e.mu.Lock(); defer e.mu.Unlock(); return e.status }
+
+func (e *Engine) SetDryRun(dryRun bool) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.cfg == nil {
+		return errors.New("config_error")
+	}
+	e.cfg.Safety.DryRun = dryRun
+	return nil
+}
+
 func (e *Engine) Reload() ReloadResult {
 	cfg, errs, err := config.Load(e.configPath)
 	e.mu.Lock()

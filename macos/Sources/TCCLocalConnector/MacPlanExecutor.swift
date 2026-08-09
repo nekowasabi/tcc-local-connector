@@ -78,7 +78,7 @@ final class DefaultNotificationPoster: NotificationPoster, @unchecked Sendable {
     }
 }
 
-final class MacPlanExecutor: PlanExecutor {
+final class MacPlanExecutor: PlanExecutor, @unchecked Sendable {
     private let workspace: LaunchWorkspace
     private let poster: NotificationPoster
     private let startTimeoutSeconds: TimeInterval

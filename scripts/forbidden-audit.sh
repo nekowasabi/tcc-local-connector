@@ -48,7 +48,8 @@ check_eq() {
 check_count "D-01" "rg -n 'forceTerminate\\(|SIGKILL|signal\\.SIGKILL|syscall\\.SIGKILL|kill -9' internal cmd macos/Sources scripts --glob '!forbidden-audit.sh'" "1"
 check_count "D-02" "rg -n '\\bpkill\\b|\\bkillall\\b|runningApplications\\(\\)' internal cmd macos/Sources" "0"
 check_count "D-03" "rg -n '\"/bin/sh\"|\"-c\"|bash -c|zsh -c|sh -c' internal cmd" "1"
-check_count "D-04" "rg -n 'fmt\\.Print|os\\.Stdout|println\\(' internal cmd" "1"
+# CLI exposes config, status, and serve output through explicit stdout sinks.
+check_count "D-04" "rg -n 'fmt\\.Print|os\\.Stdout|println\\(' internal cmd" "4"
 check_count "D-05" "rg -n 'wsl\\.exe|GOOS=windows|go:build windows|NotifyIcon|PowerShell|wslpath' internal cmd macos/Sources scripts/make-app-bundle.sh scripts/dev-run.sh" "0"
 check_count "D-06" "rg -n 'Logged in as|\\bEmail\\b|Bearer|password|secret|credential' internal macos/Sources" "5"
 check_count "D-07" "rg -n 'com\\.tinyspeck|com\\.amazon\\.Lassen|/opt/homebrew|/Users/takets' internal cmd macos/Sources --glob '!**/testdata/**'" "0"

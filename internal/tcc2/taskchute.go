@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os/exec"
@@ -50,7 +51,7 @@ func Open(ctx context.Context, executable string, args []string) (*Session, erro
 		_ = s.Close()
 		return nil, err
 	}
-	if err := json.NewEncoder(in).Encode(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized", "params": map[string]any{}}); err != nil {
+	if err := json.NewEncoder(in).Encode(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized", "params": map[string]any{}}); err != nil && !errors.Is(err, io.ErrClosedPipe) {
 		_ = s.Close()
 		return nil, err
 	}
@@ -72,6 +73,27 @@ func (s *Session) read(ctx context.Context, expected int) (json.RawMessage, erro
 		err     error
 	}
 	for {
+		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+			line, err := readBoundedLine(s.output, maxResponseBytes)
+			if err != nil {
+				return nil, err
+			}
+			var response struct {
+				ID     int             `json:"id"`
+				Result json.RawMessage `json:"result"`
+				Error  json.RawMessage `json:"error"`
+			}
+			if err := json.Unmarshal(line, &response); err != nil {
+				return nil, err
+			}
+			if response.ID != expected {
+				continue
+			}
+			if len(response.Error) > 0 && string(response.Error) != "null" {
+				return nil, fmt.Errorf("MCP response error")
+			}
+			return response.Result, nil
+		}
 		done := make(chan reply, 1)
 		go func() { line, err := readBoundedLine(s.output, maxResponseBytes); done <- reply{line, err} }()
 		select {

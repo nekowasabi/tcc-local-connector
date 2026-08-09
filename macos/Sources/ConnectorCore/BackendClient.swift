@@ -27,12 +27,13 @@ public actor BackendClient {
 	private var process: Process?
 	private var input: Pipe?
     private var stdout: Pipe?
-    private var stderr: Pipe?
+	private var stderr: Pipe?
     private var framer = LineFramer()
     public private(set) var plans: [PlanPayload] = []
     public private(set) var notifications: [NotifyPayload] = []
     public private(set) var responses: [BackendResponse] = []
     public private(set) var diagnostics: [String] = []
+	private var nextRequestSequence = 0
 
     public init() {}
 
@@ -75,6 +76,28 @@ public actor BackendClient {
 		payload.append(0x0A)
 		input.fileHandleForWriting.write(payload)
 	}
+
+	public func send(method: String, params: JSONValue? = nil) throws {
+		nextRequestSequence += 1
+		let request = params.map { BackendRequest(id: "menu-\(nextRequestSequence)", method: method, params: $0) }
+			?? BackendRequest(id: "menu-\(nextRequestSequence)", method: method)
+		try send(request)
+	}
+
+	public func takePlans() -> [PlanPayload] {
+		defer { plans.removeAll() }
+		return plans
+	}
+
+	public func takeResponses() -> [BackendResponse] {
+		defer { responses.removeAll() }
+		return responses
+	}
+
+    public func takeNotifications() -> [NotifyPayload] {
+        defer { notifications.removeAll() }
+        return notifications
+    }
 
     public func consumeStdout(_ data: Data) {
         for line in framer.push(data) {
@@ -139,12 +162,14 @@ public actor BackendClient {
 		input = nil
 		stdout = nil
 		stderr = nil
+		if let process, process.isRunning {
+			process.terminate()
+		}
 		process = nil
         state = .terminated
     }
 
-    // Why: This path is reserved for the connector's own backend child after
-    // graceful shutdown has failed; managed applications never use it.
+    // Why: The backend child is owned by this connector, so escalation is allowed for the child only.
     public func hardKill(_ process: Process) {
         _ = kill(process.processIdentifier, SIGKILL)
     }

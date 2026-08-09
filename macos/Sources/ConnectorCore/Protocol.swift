@@ -48,6 +48,27 @@ public struct PlanAction: Codable, Sendable {
     }
 }
 public struct PlanPayload: Codable, Sendable { public let cycleID: Int64; public let dryRun: Bool; public let actions: [PlanAction]; public let enforceStopBundleIDs: [String]; enum CodingKeys: String, CodingKey { case cycleID = "cycle_id", dryRun = "dry_run", actions, enforceStopBundleIDs = "enforce_stop_bundle_ids" } }
-public struct StatusPayload: Codable, Sendable { public let state: String; public let cycleID: Int64; public let parseOK: Bool; enum CodingKeys: String, CodingKey { case state; case cycleID = "cycle_id"; case parseOK = "parse_ok" } }
+public struct RunningTaskPayload: Codable, Sendable {
+    public let name: String
+    public let taskID: String
+
+    enum CodingKeys: String, CodingKey { case name; case taskID = "task_id" }
+}
+
+public struct StatusPayload: Codable, Sendable {
+    public let state: String
+    public let cycleID: Int64
+    public let parseOK: Bool
+    public let runningTasks: [RunningTaskPayload]
+    public let lastError: String?
+
+    enum CodingKeys: String, CodingKey {
+        case state
+        case cycleID = "cycle_id"
+        case parseOK = "parse_ok"
+        case runningTasks = "running_tasks"
+        case lastError = "last_error"
+    }
+}
 public struct NotifyPayload: Codable, Sendable { public let level: String; public let code: String; public let title: String; public let message: String; public let at: Date? }
 public struct StateChangedPayload: Codable, Sendable { public let state: String; public let cycleID: Int64; enum CodingKeys: String, CodingKey { case state; case cycleID = "cycle_id" } }

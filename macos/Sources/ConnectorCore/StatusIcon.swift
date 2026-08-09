@@ -1,4 +1,15 @@
 public enum StatusIcon {
+	public static func symbolName(_ state: BackendState) -> String {
+		switch state {
+		case .starting: return "clock"
+		case .running: return "checklist"
+		case .backendDown: return "exclamationmark.triangle"
+		case .backendDownPermanent: return "xmark.octagon"
+		case .backendIncompatible: return "exclamationmark.arrow.triangle.2.circlepath"
+		case .terminated: return "power"
+		}
+	}
+
     public static func describe(_ state: BackendState) -> String {
         switch state {
         case .starting: return "時計"

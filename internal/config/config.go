@@ -71,7 +71,7 @@ type Action struct {
 }
 
 func defaults() Config {
-	return Config{Version: constants.ConfigSchemaVersion, Polling: Polling{IntervalSeconds: constants.DefaultPollIntervalSeconds, TimeoutSeconds: constants.DefaultPollTimeoutSeconds, FailureGraceSeconds: constants.DefaultFailureGraceSeconds, FailurePolicy: "release_controls"}, TaskSource: TaskSource{Type: "tcc2_mcp", Args: []string{"mcp"}}, Logging: Logging{Level: constants.DefaultLogLevel, RetainDays: constants.DefaultLogRetainDays}, Rules: []Rule{}}
+	return Config{Version: constants.ConfigSchemaVersion, Polling: Polling{IntervalSeconds: constants.DefaultPollIntervalSeconds, TimeoutSeconds: constants.DefaultPollTimeoutSeconds, FailureGraceSeconds: constants.DefaultFailureGraceSeconds, FailurePolicy: "release_controls"}, TaskSource: TaskSource{Type: "tcc2_mcp", Args: []string{"mcp"}}, Safety: Safety{DryRun: true}, Logging: Logging{Level: constants.DefaultLogLevel, RetainDays: constants.DefaultLogRetainDays}, Rules: []Rule{}}
 }
 
 func Load(path string) (*Config, []ValidationError, error) {

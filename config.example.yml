@@ -1,6 +1,7 @@
 version: 2
 task_source:
-  executable: <YOUR_PATH>
+  executable: /bin/sh
+  args: [internal/engine/testdata/fake-tcc2.sh]
 rules:
   - id: example
     match:

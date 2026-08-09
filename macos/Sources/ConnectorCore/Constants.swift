@@ -9,8 +9,11 @@ public enum Constants {
     public static let backendRestartMaxAttempts = 5
     public static let backendRestartBaseDelaySeconds = 1
     public static let backendRestartDelayFactor = 2
-    public static let backendRestartMaxDelaySeconds = 30
+	public static let backendRestartMaxDelaySeconds = 30
+	public static let menuRefreshIntervalSeconds = 5
 	public static let backendRequestTimeoutSeconds = 30
+	public static let pausePresetShortSeconds = 900
+	public static let pausePresetLongSeconds = 3600
 	public static let appStopPollIntervalMilliseconds = 250
 	public static let notifierRecentCapacity = 20
 }

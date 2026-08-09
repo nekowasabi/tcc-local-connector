@@ -25,6 +25,15 @@ TaskChute Cloud 2 の実行中タスクを取得し、設定したルールに�
 
 `dist/TCCLocalConnector.app` はこのリポジトリの同梱スクリプトで作成されます。
 
+## CLI での設定確認と一巡実行
+
+設定を変更した後は、副作用なしで構文・権限・ルールを確認できます。
+
+- `go run ./cmd/tcc-local-connector-backend config-test --config /path/to/config.yml`
+- `go run ./cmd/tcc-local-connector-backend run-once --config /path/to/config.yml`
+
+`run-once` は TaskChute の取得と、設定された Go 側のプロセス・コマンド操作を1回だけ実行します。アプリ起動・通常終了・通知は macOS メニューバーアプリが `plan` を受けて実行します。
+
 ## 設定の作り方
 
 1. `config.example.yml` をコピー
@@ -89,4 +98,3 @@ TaskChute Cloud 2 の実行中タスクを取得し、設定したルールに�
 - 設定: `~/.config/tcc-local-connector/config.yml`
 - 一時停止: `~/.local/state/tcc-local-connector/pause.json`
 - 台帳: `~/.local/state/tcc-local-connector/managed-processes.json`
-
