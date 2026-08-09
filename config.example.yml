@@ -2,6 +2,8 @@ version: 2
 task_source:
   executable: /bin/sh
   args: [internal/engine/testdata/fake-tcc2.sh]
+polling:
+  interval_seconds: 60
 rules:
   - id: example
     match:
@@ -9,3 +11,7 @@ rules:
     ensure:
       - type: app.start
         bundle_id: example.application
+      - type: notify
+        title: Example
+        message: Example task is running
+        level: info

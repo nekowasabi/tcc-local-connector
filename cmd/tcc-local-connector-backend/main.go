@@ -10,10 +10,12 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/takets/tcc-local-connector/internal/config"
+	"github.com/takets/tcc-local-connector/internal/constants"
 	"github.com/takets/tcc-local-connector/internal/engine"
 	connectorlog "github.com/takets/tcc-local-connector/internal/logging"
 	"github.com/takets/tcc-local-connector/internal/protocol"
@@ -79,7 +81,19 @@ func serve(options options) error {
 	server.ProbeTCC2 = func(ctx context.Context) (tcc2.ProbeResult, error) {
 		return tcc2.Probe(ctx, options.tcc2Executable)
 	}
-	structuredLogger := connectorlog.New(os.Stderr, "info")
+	logPath := engine.LogPath(options.configPath)
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
+		return fmt.Errorf("create log directory: %w", err)
+	}
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, constants.StateFileMode)
+	if err != nil {
+		return fmt.Errorf("open log file: %w", err)
+	}
+	defer logFile.Close()
+	if err := logFile.Chmod(constants.StateFileMode); err != nil {
+		return fmt.Errorf("set log file permissions: %w", err)
+	}
+	structuredLogger := connectorlog.New(io.MultiWriter(os.Stderr, logFile), "info")
 	server.StructuredLogger = structuredLogger
 	backend := engine.New(engine.Deps{ConfigPath: options.configPath, Logger: structuredLogger})
 	backend.SetEventSink(server.Emit)

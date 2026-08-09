@@ -94,6 +94,45 @@ func TestEngine_TickStartsCycle(t *testing.T) {
 	}
 }
 
+func TestEngine_DryRunEmitsNotificationForSkippedActions(t *testing.T) {
+	fake := createFakeMCPScript(t)
+	events := make(chan any, 1)
+	engine := New(Deps{Emit: func(name string, data any) {
+		if name == "notify" {
+			events <- data
+		}
+	}})
+	engine.cfg = &config.Config{
+		TaskSource: config.TaskSource{Type: "tcc2_mcp", Executable: fake, Args: []string{"mcp"}},
+		Polling:    config.Polling{TimeoutSeconds: constants.DefaultPollTimeoutSeconds, FailureGraceSeconds: constants.DefaultFailureGraceSeconds, IntervalSeconds: constants.MinPollIntervalSeconds},
+		Safety:     config.Safety{DryRun: true},
+		Rules: []config.Rule{{
+			ID:    "dry-run-rule",
+			Match: config.Match{},
+			Ensure: []config.Action{{
+				Type:     "app.stop",
+				BundleID: "com.example.App",
+			}},
+		}},
+	}
+
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatalf("RunCycleNow() = %v", err)
+	}
+
+	data := <-events
+	notification, ok := data.(map[string]any)
+	if !ok {
+		t.Fatalf("notification type = %T, want map[string]any", data)
+	}
+	if got := notification["code"]; got != "dry_run_skipped" {
+		t.Fatalf("notification code = %v, want dry_run_skipped", got)
+	}
+	if got := notification["message"]; got != "dry_run: 1件のアクションを実行せずスキップしました" {
+		t.Fatalf("notification message = %v", got)
+	}
+}
+
 func TestEngine_RefreshNow_StartsImmediateCycle(t *testing.T) {
 	fake := createFakeMCPScript(t)
 	engine := New(Deps{})

@@ -177,7 +177,7 @@ final class MenuController: ObservableObject {
             }
         }
         for plan in await backend.takePlans() {
-            watcher.update(enforceStopBundleIDs: Set(plan.enforceStopBundleIDs))
+            watcher.update(enforceStopBundleIDs: plan.dryRun ? [] : Set(plan.enforceStopBundleIDs))
             let outcomes = await executor.execute(plan)
             let results = Dictionary(uniqueKeysWithValues: zip(plan.actions, outcomes).map { action, outcome in
                 (action.id, actionResult(outcome))

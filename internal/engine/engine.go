@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -83,6 +84,9 @@ func defaultStateDir(configPath string) string {
 		return filepath.Dir(configPath)
 	}
 	return filepath.Join(home, constants.StateDirRelPath)
+}
+func LogPath(configPath string) string {
+	return filepath.Join(defaultStateDir(configPath), constants.LogFileName)
 }
 func (e *Engine) SetEventSink(emit func(string, any)) { e.mu.Lock(); e.emit = emit; e.mu.Unlock() }
 func (e *Engine) emitEvent(name string, data any) {
@@ -249,6 +253,17 @@ func (e *Engine) RunCycleNow(ctx context.Context) (int64, error) {
 	e.executeBackendActions(ctx, backend, cfg.Safety.DryRun, cfg.Safety.AllowShell)
 	e.emitEvent("state_changed", status)
 	e.emitEvent("plan", plan)
+	if cfg.Safety.DryRun && len(backend)+len(frontend) > 0 {
+		message := fmt.Sprintf("dry_run: %d件のアクションを実行せずスキップしました", len(backend)+len(frontend))
+		e.logger.Log(logging.Entry{Level: "info", Component: "engine", Event: "dry_run_skipped", Message: message})
+		e.emitEvent("notify", map[string]any{
+			"level":   "info",
+			"code":    "dry_run_skipped",
+			"title":   "dry_run のため未実行",
+			"message": message,
+			"at":      time.Now().UTC(),
+		})
+	}
 	return id, nil
 }
 func (e *Engine) executeBackendActions(ctx context.Context, actions []rules.PlannedAction, dryRun, allowShell bool) []ActionResult {
@@ -415,5 +430,5 @@ func (e *Engine) ReportActions(cycleID int64, results []ActionResult) (int, int)
 }
 func (e *Engine) Paths() map[string]string {
 	stateDir := filepath.Dir(e.pausePath)
-	return map[string]string{"config": e.configPath, "state_dir": stateDir, "pause": e.pausePath, "ledger": filepath.Join(stateDir, constants.LedgerFileName), "log": filepath.Join(stateDir, constants.LogFileName)}
+	return map[string]string{"config": e.configPath, "state_dir": stateDir, "pause": e.pausePath, "ledger": filepath.Join(stateDir, constants.LedgerFileName), "log": LogPath(e.configPath)}
 }
