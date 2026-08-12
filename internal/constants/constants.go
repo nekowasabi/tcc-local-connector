@@ -71,3 +71,19 @@ const (
 	BundleIDPattern      = `^[A-Za-z0-9][A-Za-z0-9._-]*$`
 	EnvKeyPattern        = `^[A-Za-z_][A-Za-z0-9_]*$`
 )
+
+const (
+	BrowserBlockActionType                 = "browser.block"
+	BrowserPolicyVersion                   = 1
+	BrowserPolicyFileName                  = "firefox-browser-policy.json"
+	BrowserOwnerHeartbeatFileName          = "firefox-owner-heartbeat.json"
+	BrowserStateDirRelative                = "TCCLocalConnector/BrowserPolicy"
+	BrowserBackendHeartbeatIntervalSeconds = 5
+	BrowserFailurePolicy                   = "fail_open"
+	BrowserPolicyMaxDomains                = 128
+	BrowserDomainMaxBytes                  = 253
+	NativeMessageHeaderBytes               = 4
+	NativeMessageMaxPayloadBytes           = 65536
+	NativeHostPollIntervalMilliseconds     = 1000
+	BrowserLivenessTTLSeconds              = 15
+)

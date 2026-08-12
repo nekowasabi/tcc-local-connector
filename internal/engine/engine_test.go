@@ -6,17 +6,32 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/takets/tcc-local-connector/internal/browserpolicy"
 	"github.com/takets/tcc-local-connector/internal/config"
 	"github.com/takets/tcc-local-connector/internal/constants"
 	"github.com/takets/tcc-local-connector/internal/ledger"
 	"github.com/takets/tcc-local-connector/internal/rules"
 	"github.com/takets/tcc-local-connector/internal/state"
 )
+
+func TestMain(m *testing.M) {
+	home, err := os.MkdirTemp("", "tcc-engine-test-home-")
+	if err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("HOME", home); err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	_ = os.RemoveAll(home)
+	os.Exit(code)
+}
 
 func TestNewRestoresActivePause(t *testing.T) {
 	home := t.TempDir()
@@ -130,6 +145,130 @@ func TestEngine_DryRunEmitsNotificationForSkippedActions(t *testing.T) {
 	}
 	if got := notification["message"]; got != "dry_run: 1件のアクションを実行せずスキップしました" {
 		t.Fatalf("notification message = %v", got)
+	}
+}
+
+func TestEngine_DryRunPublishesPlannedDomainsAndNotifiesOnChange(t *testing.T) {
+	fake := createActiveFakeMCPScript(t)
+	policyPath := filepath.Join(t.TempDir(), constants.BrowserPolicyFileName)
+	notifications := make(chan map[string]any, 4)
+	engine := New(Deps{BrowserPolicyPath: policyPath, Emit: func(name string, data any) {
+		if name == "notify" {
+			if notification, ok := data.(map[string]any); ok && notification["code"] == "browser_block_dry_run" {
+				notifications <- notification
+			}
+		}
+	}})
+	engine.cfg = browserTestConfig(fake, true)
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	policy := readBrowserPolicy(t, policyPath)
+	if policy.Enforce || !policy.DryRun || len(policy.Domains) != 0 || !reflect.DeepEqual(policy.PlannedDomains, []string{"example.com"}) {
+		t.Fatalf("dry-run policy = %#v", policy)
+	}
+	if notification := <-notifications; notification["title"] != "ブラウザ遮断（dry-run）" {
+		t.Fatalf("notification = %#v", notification)
+	}
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case notification := <-notifications:
+		t.Fatalf("duplicate notification = %#v", notification)
+	default:
+	}
+}
+
+func TestRunCycleNowPublishesEnforcedBrowserPolicy(t *testing.T) {
+	fake := createActiveFakeMCPScript(t)
+	policyPath := filepath.Join(t.TempDir(), constants.BrowserPolicyFileName)
+	engine := New(Deps{BrowserPolicyPath: policyPath})
+	engine.cfg = browserTestConfig(fake, false)
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	policy := readBrowserPolicy(t, policyPath)
+	want := []string{"example.com"}
+	if !policy.Enforce || policy.DryRun || !reflect.DeepEqual(policy.Domains, want) || !reflect.DeepEqual(policy.PlannedDomains, want) {
+		t.Fatalf("policy = %#v", policy)
+	}
+}
+
+func TestEngine_ReleaseControlsPublishesEmptyPolicy(t *testing.T) {
+	fake := createActiveFakeMCPScript(t)
+	policyPath := filepath.Join(t.TempDir(), constants.BrowserPolicyFileName)
+	engine := New(Deps{BrowserPolicyPath: policyPath})
+	engine.cfg = browserTestConfig(fake, false)
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	engine.ReportActions(engine.Snapshot().CycleID, []ActionResult{{ActionID: "1-1", Status: "failed"}})
+	policy := readBrowserPolicy(t, policyPath)
+	if policy.Enforce || policy.DryRun || len(policy.Domains) != 0 || len(policy.PlannedDomains) != 0 {
+		t.Fatalf("release-controls policy = %#v", policy)
+	}
+}
+
+func TestEngine_PauseAndResumePublishEmptyPolicy(t *testing.T) {
+	policyPath := filepath.Join(t.TempDir(), constants.BrowserPolicyFileName)
+	engine := New(Deps{ConfigPath: filepath.Join(t.TempDir(), "config.yml"), BrowserPolicyPath: policyPath})
+	if err := engine.Pause(time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	paused := readBrowserPolicy(t, policyPath)
+	if paused.Enforce || len(paused.Domains) != 0 || len(paused.PlannedDomains) != 0 {
+		t.Fatalf("paused policy = %#v", paused)
+	}
+	if err := engine.Resume(); err != nil {
+		t.Fatal(err)
+	}
+	resumed := readBrowserPolicy(t, policyPath)
+	if resumed.Generation <= paused.Generation || resumed.Enforce {
+		t.Fatalf("resumed policy = %#v after %#v", resumed, paused)
+	}
+}
+
+type failOncePolicyStore struct {
+	store    *browserpolicy.Store
+	failNext bool
+}
+
+type memoryPolicyStore struct{ generation uint64 }
+
+func (s *memoryPolicyStore) Publish(enforce, dryRun bool, domains, planned []string) (browserpolicy.Policy, error) {
+	s.generation++
+	return browserpolicy.Policy{Version: constants.BrowserPolicyVersion, Generation: s.generation, Enforce: enforce, DryRun: dryRun, Domains: domains, PlannedDomains: planned, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}, nil
+}
+
+func (s *memoryPolicyStore) PublishEmpty() (browserpolicy.Policy, error) {
+	return s.Publish(false, false, []string{}, []string{})
+}
+
+func (s *failOncePolicyStore) Publish(enforce, dryRun bool, domains, planned []string) (browserpolicy.Policy, error) {
+	if s.failNext {
+		s.failNext = false
+		return browserpolicy.Policy{}, errors.New("injected publication failure")
+	}
+	return s.store.Publish(enforce, dryRun, domains, planned)
+}
+
+func (s *failOncePolicyStore) PublishEmpty() (browserpolicy.Policy, error) {
+	return s.store.PublishEmpty()
+}
+
+func TestRunCycleNowPolicyWriteFailureFallsOpen(t *testing.T) {
+	fake := createActiveFakeMCPScript(t)
+	policyPath := filepath.Join(t.TempDir(), constants.BrowserPolicyFileName)
+	store := &failOncePolicyStore{store: browserpolicy.NewStore(policyPath), failNext: true}
+	engine := New(Deps{BrowserPolicyPath: policyPath, BrowserPolicyStore: store})
+	engine.cfg = browserTestConfig(fake, false)
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	policy := readBrowserPolicy(t, policyPath)
+	if policy.Enforce || len(policy.Domains) != 0 || len(policy.PlannedDomains) != 0 {
+		t.Fatalf("write-failure policy = %#v", policy)
 	}
 }
 
@@ -304,6 +443,50 @@ func TestEngine_RunStopsOnContextCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("Run did not stop on context cancel")
+	}
+}
+
+func TestEngine_BrowserPolicyRepublishesAfterFiveSeconds(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(configPath, []byte("task_source:\n  type: tcc2_mcp\n  executable: /bin/echo\n  args: [mcp]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	policyPath := filepath.Join(t.TempDir(), constants.BrowserPolicyFileName)
+	engine := New(Deps{ConfigPath: configPath, BrowserPolicyPath: policyPath})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		engine.Run(ctx)
+		close(done)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	var first browserpolicy.Policy
+	for {
+		if payload, err := os.ReadFile(policyPath); err == nil {
+			if policy, err := browserpolicy.Decode(payload); err == nil {
+				first = policy
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("initial policy was not published")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	deadline = time.Now().Add(7 * time.Second)
+	for {
+		current := readBrowserPolicy(t, policyPath)
+		if current.Generation > first.Generation && current.UpdatedAt != first.UpdatedAt {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("policy was not republished: first=%#v current=%#v", first, current)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
@@ -673,7 +856,7 @@ func TestEngine_TooManyRunningTasks_TreatedAsFailure(t *testing.T) {
 
 func TestTenThousandCycles(t *testing.T) {
 	fake := createFakeMCPScript(t)
-	engine := New(Deps{})
+	engine := New(Deps{BrowserPolicyStore: &memoryPolicyStore{}})
 	engine.cfg = &config.Config{
 		Version: constants.ConfigSchemaVersion,
 		TaskSource: config.TaskSource{
@@ -720,6 +903,46 @@ func createFakeMCPScript(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func createActiveFakeMCPScript(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "fake-tcc2-active")
+	script := "#!/bin/sh\nrequest_id=0\nwhile IFS= read -r line; do\n  case \"$line\" in\n    *'\"method\":\"notifications/initialized\"'*) continue ;;\n  esac\n  request_id=$((request_id + 1))\n  case \"$line\" in\n    *'\"method\":\"initialize\"'*) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"protocolVersion\":\"2025-06-18\",\"serverInfo\":{\"name\":\"fake\"}}}\\n' \"$request_id\" ;;\n    *'\"name\":\"get_user\"'*) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"- **Timezone:** UTC\\\\n- **Start of Day:** -05:00:00\"}]}}\\n' \"$request_id\" ;;\n    *'\"name\":\"get_taskchute\"'*) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"## 2026-08-07\\\\n- [In Progress] Active [ID: task_1234567890abcdef1234567890abcdef]\"}]}}\\n' \"$request_id\" ;;\n  esac\n done\n"
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func browserTestConfig(executable string, dryRun bool) *config.Config {
+	return &config.Config{
+		TaskSource: config.TaskSource{Type: "tcc2_mcp", Executable: executable, Args: []string{"mcp"}},
+		Polling:    config.Polling{TimeoutSeconds: constants.DefaultPollTimeoutSeconds, FailureGraceSeconds: 0, FailurePolicy: "release_controls", IntervalSeconds: constants.MinPollIntervalSeconds},
+		Safety:     config.Safety{DryRun: dryRun},
+		Logging:    config.Logging{Level: constants.DefaultLogLevel, RetainDays: constants.DefaultLogRetainDays},
+		Rules: []config.Rule{{
+			ID:    "browser",
+			Match: config.Match{TaskNameContains: []string{"Active"}},
+			Ensure: []config.Action{{
+				Type:    constants.BrowserBlockActionType,
+				Domains: []string{"example.com"},
+			}},
+		}},
+	}
+}
+
+func readBrowserPolicy(t *testing.T, path string) browserpolicy.Policy {
+	t.Helper()
+	payload, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := browserpolicy.Decode(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return policy
 }
 
 func createHugeOutputScript(t *testing.T) string {

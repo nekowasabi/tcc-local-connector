@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/takets/tcc-local-connector/internal/browserpolicy"
 	"github.com/takets/tcc-local-connector/internal/config"
 	"github.com/takets/tcc-local-connector/internal/constants"
 	"github.com/takets/tcc-local-connector/internal/ledger"
@@ -23,9 +24,14 @@ import (
 )
 
 type Deps struct {
-	ConfigPath string
-	Emit       func(string, any)
-	Logger     *logging.Logger
+	ConfigPath         string
+	Emit               func(string, any)
+	Logger             *logging.Logger
+	BrowserPolicyPath  string
+	BrowserPolicyStore interface {
+		Publish(bool, bool, []string, []string) (browserpolicy.Policy, error)
+		PublishEmpty() (browserpolicy.Policy, error)
+	}
 }
 type ReloadResult struct {
 	OK      bool                     `json:"ok"`
@@ -51,6 +57,20 @@ type Engine struct {
 	emit       func(string, any)
 	logger     *logging.Logger
 	lastTick   time.Time
+	policy     interface {
+		Publish(bool, bool, []string, []string) (browserpolicy.Policy, error)
+		PublishEmpty() (browserpolicy.Policy, error)
+	}
+	policyPath string
+	policyMode browserPolicyState
+	dryRunFP   string
+}
+
+type browserPolicyState struct {
+	enforce bool
+	dryRun  bool
+	domains []string
+	planned []string
 }
 
 func New(deps Deps) *Engine {
@@ -65,6 +85,14 @@ func New(deps Deps) *Engine {
 	}
 	logger.Rotate(stateDir, constants.DefaultLogRetainDays, time.Now())
 	engine := &Engine{configPath: path, machine: state.NewMachine(), status: Status{State: state.StateStarting, RunningTasks: []TaskView{}}, pausePath: filepath.Join(stateDir, constants.PauseFileName), emit: deps.Emit, logger: logger}
+	engine.policyPath = deps.BrowserPolicyPath
+	if engine.policyPath == "" {
+		engine.policyPath = defaultBrowserPolicyPath(path)
+	}
+	engine.policy = deps.BrowserPolicyStore
+	if engine.policy == nil {
+		engine.policy = browserpolicy.NewStore(engine.policyPath)
+	}
 	if value, err := ledger.Load(filepath.Join(stateDir, constants.LedgerFileName)); err == nil {
 		engine.ledger = ledger.NewManager(value)
 	}
@@ -85,6 +113,13 @@ func defaultStateDir(configPath string) string {
 	}
 	return filepath.Join(home, constants.StateDirRelPath)
 }
+func defaultBrowserPolicyPath(configPath string) string {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		configDir = filepath.Dir(configPath)
+	}
+	return filepath.Join(configDir, constants.BrowserStateDirRelative, constants.BrowserPolicyFileName)
+}
 func LogPath(configPath string) string {
 	return filepath.Join(defaultStateDir(configPath), constants.LogFileName)
 }
@@ -102,10 +137,14 @@ func (e *Engine) Run(ctx context.Context) {
 	_ = e.Reload()
 	timer := time.NewTimer(e.pollInterval())
 	defer timer.Stop()
+	policyTicker := time.NewTicker(constants.BrowserBackendHeartbeatIntervalSeconds * time.Second)
+	defer policyTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-policyTicker.C:
+			e.republishBrowserPolicy()
 		case now := <-timer.C:
 			if e.detectWake(now) {
 				tcc2.InvalidateUserCache()
@@ -157,10 +196,12 @@ func (e *Engine) Reload() ReloadResult {
 	e.mu.Lock()
 	if err != nil {
 		e.mu.Unlock()
+		_ = e.publishEmptyBrowserPolicy()
 		return ReloadResult{OK: false}
 	}
 	if len(errs) > 0 {
 		e.mu.Unlock()
+		_ = e.publishEmptyBrowserPolicy()
 		return ReloadResult{OK: false, Errors: errs}
 	}
 	e.cfg = cfg
@@ -171,6 +212,7 @@ func (e *Engine) Reload() ReloadResult {
 	// Snapshot acquires the same mutex and would deadlock the reload path.
 	current := e.status
 	e.mu.Unlock()
+	_ = e.publishEmptyBrowserPolicy()
 	go e.emitEvent("state_changed", current)
 	return result
 }
@@ -184,6 +226,7 @@ func (e *Engine) RunCycleNow(ctx context.Context) (int64, error) {
 		pause, err := state.LoadPause(e.pausePath)
 		if err != nil || pause.Until.IsZero() || !pause.Expired(time.Now()) {
 			e.mu.Unlock()
+			_ = e.publishEmptyBrowserPolicy()
 			return 0, errors.New("paused")
 		}
 		if err := state.ClearPause(e.pausePath); err != nil {
@@ -195,6 +238,7 @@ func (e *Engine) RunCycleNow(ctx context.Context) (int64, error) {
 	}
 	if e.cfg == nil {
 		e.mu.Unlock()
+		_ = e.publishEmptyBrowserPolicy()
 		return 0, errors.New("config_error")
 	}
 	e.running = true
@@ -217,6 +261,9 @@ func (e *Engine) RunCycleNow(ctx context.Context) (int64, error) {
 		e.status.LastError = err.Error()
 		current := e.status
 		e.mu.Unlock()
+		if transition.ReleaseControls {
+			_ = e.publishEmptyBrowserPolicy()
+		}
 		go e.emitEvent("state_changed", current)
 		if transition.ReleaseControls {
 			go e.emitEvent("plan", rules.Plan{CycleID: id, Actions: []rules.PlannedAction{}, EnforceStopBundleIDs: []string{}})
@@ -238,6 +285,7 @@ func (e *Engine) RunCycleNow(ctx context.Context) (int64, error) {
 	plan, _ := rules.BuildPlan(id, previous, current)
 	plan.DryRun = cfg.Safety.DryRun
 	e.previous = current
+	plannedDomains := rules.BuildBrowserPolicy(current)
 	frontend := make([]rules.PlannedAction, 0, len(plan.Actions))
 	backend := make([]rules.PlannedAction, 0, len(plan.Actions))
 	for _, action := range plan.Actions {
@@ -250,6 +298,15 @@ func (e *Engine) RunCycleNow(ctx context.Context) (int64, error) {
 	plan.Actions = frontend
 	status := e.status
 	e.mu.Unlock()
+	if cfg.Safety.DryRun {
+		if err := e.publishBrowserPolicy(false, true, []string{}, plannedDomains); err != nil {
+			e.logger.Log(logging.Entry{Level: "error", Component: "engine", Event: "browser_policy_publish_failed", Message: err.Error()})
+		}
+	} else if len(plannedDomains) == 0 {
+		_ = e.publishEmptyBrowserPolicy()
+	} else if err := e.publishBrowserPolicy(true, false, plannedDomains, plannedDomains); err != nil {
+		e.logger.Log(logging.Entry{Level: "error", Component: "engine", Event: "browser_policy_publish_failed", Message: err.Error()})
+	}
 	e.executeBackendActions(ctx, backend, cfg.Safety.DryRun, cfg.Safety.AllowShell)
 	e.emitEvent("state_changed", status)
 	e.emitEvent("plan", plan)
@@ -388,13 +445,14 @@ func (e *Engine) Pause(until time.Time) error {
 		return err
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	e.machine.Transition("pause", time.Now(), 0)
 	e.status.State = e.machine.Current()
 	current := e.status
+	e.mu.Unlock()
+	policyErr := e.publishEmptyBrowserPolicy()
 	go e.emitEvent("state_changed", current)
 	go e.emitEvent("plan", rules.Plan{CycleID: current.CycleID, Actions: []rules.PlannedAction{}, EnforceStopBundleIDs: []string{}})
-	return nil
+	return policyErr
 }
 func (e *Engine) Resume() error {
 	e.mu.Lock()
@@ -407,12 +465,13 @@ func (e *Engine) Resume() error {
 		return err
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	e.machine.Transition("resume", time.Now(), 0)
 	e.status.State = e.machine.Current()
 	current := e.status
+	e.mu.Unlock()
+	policyErr := e.publishEmptyBrowserPolicy()
 	go e.emitEvent("state_changed", current)
-	return nil
+	return policyErr
 }
 func (e *Engine) ReportActions(cycleID int64, results []ActionResult) (int, int) {
 	e.mu.Lock()
@@ -421,14 +480,65 @@ func (e *Engine) ReportActions(cycleID int64, results []ActionResult) (int, int)
 		return 0, len(results)
 	}
 	e.mu.Unlock()
+	releaseControls := false
 	for _, result := range results {
 		if result.Status == "failed" || result.Status == "refused" || result.Status == "timeout" {
+			releaseControls = true
 			e.emitEvent("notify", map[string]any{"level": "warn", "code": "action_refused", "title": "アクションを実行できませんでした", "message": "アクション " + result.ActionID + " は " + result.Status + " でした", "at": time.Now().UTC()})
 		}
+	}
+	if releaseControls {
+		_ = e.publishEmptyBrowserPolicy()
 	}
 	return len(results), 0
 }
 func (e *Engine) Paths() map[string]string {
 	stateDir := filepath.Dir(e.pausePath)
-	return map[string]string{"config": e.configPath, "state_dir": stateDir, "pause": e.pausePath, "ledger": filepath.Join(stateDir, constants.LedgerFileName), "log": LogPath(e.configPath)}
+	return map[string]string{"config": e.configPath, "state_dir": stateDir, "pause": e.pausePath, "ledger": filepath.Join(stateDir, constants.LedgerFileName), "log": LogPath(e.configPath), "browser_policy": e.policyPath}
+}
+
+func (e *Engine) publishBrowserPolicy(enforce, dryRun bool, domains, planned []string) error {
+	policy, err := e.policy.Publish(enforce, dryRun, domains, planned)
+	if err != nil {
+		e.mu.Lock()
+		e.policyMode = browserPolicyState{domains: []string{}, planned: []string{}}
+		e.dryRunFP = ""
+		e.mu.Unlock()
+		_, _ = e.policy.PublishEmpty()
+		return err
+	}
+	notify := false
+	fingerprint := browserpolicy.Fingerprint(policy.PlannedDomains)
+	e.mu.Lock()
+	e.policyMode = browserPolicyState{enforce: policy.Enforce, dryRun: policy.DryRun, domains: append([]string(nil), policy.Domains...), planned: append([]string(nil), policy.PlannedDomains...)}
+	if policy.DryRun && len(policy.PlannedDomains) > 0 {
+		notify = fingerprint != e.dryRunFP
+		e.dryRunFP = fingerprint
+	} else {
+		e.dryRunFP = ""
+	}
+	e.mu.Unlock()
+	if notify {
+		e.emitEvent("notify", map[string]any{
+			"level":   "info",
+			"code":    "browser_block_dry_run",
+			"title":   "ブラウザ遮断（dry-run）",
+			"message": strings.Join(policy.PlannedDomains, ", "),
+			"at":      time.Now().UTC(),
+		})
+	}
+	return nil
+}
+
+func (e *Engine) publishEmptyBrowserPolicy() error {
+	return e.publishBrowserPolicy(false, false, []string{}, []string{})
+}
+
+func (e *Engine) republishBrowserPolicy() {
+	e.mu.Lock()
+	current := e.policyMode
+	e.mu.Unlock()
+	if err := e.publishBrowserPolicy(current.enforce, current.dryRun, current.domains, current.planned); err != nil {
+		e.logger.Log(logging.Entry{Level: "error", Component: "engine", Event: "browser_policy_republish_failed", Message: err.Error()})
+	}
 }

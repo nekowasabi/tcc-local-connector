@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,6 +29,13 @@ const (
 	codeShellNotAllowed          = "shell_not_allowed"
 	codeForbiddenSafetyFlag      = "forbidden_safety_flag"
 	codeRuleConflictSamePriority = "rule_conflict_same_priority"
+)
+
+const (
+	codeBrowserBlockRequiresEnsure = "browser_block_requires_ensure"
+	codeBrowserDomainsRequired     = "browser_domains_required"
+	codeBrowserDomainsLimit        = "browser_domains_limit"
+	codeInvalidBrowserDomain       = "invalid_browser_domain"
 )
 
 var (
@@ -117,14 +125,23 @@ func validateRule(rule *Rule, index int, allowShell bool, ruleIDs, processIDs ma
 	}
 	for group, actions := range map[string][]Action{"ensure": rule.Ensure, "on_enter": rule.OnEnter, "on_exit": rule.OnExit} {
 		for i := range actions {
-			errors = append(errors, validateAction(&actions[i], base+"."+group+"["+strconvItoa(i)+"]", allowShell, processIDs, conflicts, rule.Priority)...)
+			errors = append(errors, validateAction(&actions[i], base+"."+group+"["+strconvItoa(i)+"]", group, allowShell, processIDs, conflicts, rule.Priority)...)
 		}
 	}
 	return errors
 }
-func validateAction(action *Action, path string, allowShell bool, processIDs map[string]bool, conflicts map[string]string, priority int) []ValidationError {
+func validateAction(action *Action, path, group string, allowShell bool, processIDs map[string]bool, conflicts map[string]string, priority int) []ValidationError {
 	var errors []ValidationError
 	switch action.Type {
+	case constants.BrowserBlockActionType:
+		if group != "ensure" {
+			errors = append(errors, validation(codeBrowserBlockRequiresEnsure, path+".type"))
+		}
+		normalized, domainErrors := validateBrowserDomains(action.Domains, path+".domains")
+		errors = append(errors, domainErrors...)
+		if len(domainErrors) == 0 {
+			action.Domains = normalized
+		}
 	case "browser.redirect":
 		return []ValidationError{validation(codeUnsupportedAction, path+".type")}
 	case "app.start", "app.stop":
@@ -195,6 +212,53 @@ func validateAction(action *Action, path string, allowShell bool, processIDs map
 		errors = append(errors, validation(codeUnknownActionType, path+".type"))
 	}
 	return errors
+}
+
+func validateBrowserDomains(domains []string, path string) ([]string, []ValidationError) {
+	if len(domains) == 0 {
+		return nil, []ValidationError{validation(codeBrowserDomainsRequired, path)}
+	}
+	if len(domains) > constants.BrowserPolicyMaxDomains {
+		return nil, []ValidationError{validation(codeBrowserDomainsLimit, path)}
+	}
+
+	normalized := make([]string, len(domains))
+	var errors []ValidationError
+	for i, domain := range domains {
+		value := strings.TrimSuffix(strings.ToLower(domain), ".")
+		if !validBrowserDomain(value) {
+			errors = append(errors, validation(codeInvalidBrowserDomain, path+"["+strconvItoa(i)+"]"))
+			continue
+		}
+		normalized[i] = value
+	}
+	return normalized, errors
+}
+
+func validBrowserDomain(domain string) bool {
+	if domain == "" || len(domain) > constants.BrowserDomainMaxBytes || !isASCII(domain) || net.ParseIP(domain) != nil {
+		return false
+	}
+	for _, label := range strings.Split(domain, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, char := range label {
+			if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isASCII(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if value[i] > 0x7f {
+			return false
+		}
+	}
+	return true
 }
 func executable(path string) bool {
 	if !filepath.IsAbs(path) {

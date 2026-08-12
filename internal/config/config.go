@@ -68,6 +68,7 @@ type Action struct {
 	Title          string            `yaml:"title" json:"title"`
 	Message        string            `yaml:"message" json:"message"`
 	Level          string            `yaml:"level" json:"level"`
+	Domains        []string          `yaml:"domains" json:"domains"`
 }
 
 func defaults() Config {

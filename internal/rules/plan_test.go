@@ -183,6 +183,54 @@ func TestBuildPlan_NoUnsupportedActions(t *testing.T) {
 	}
 }
 
+func TestPlan_NoBrowserBlockInActions(t *testing.T) {
+	current := Evaluation{
+		ActiveRuleIDs: map[string]bool{"r": true},
+		Rules: map[string]config.Rule{
+			"r": {ID: "r", Ensure: []config.Action{
+				{Type: "browser.block", Domains: []string{"example.com"}},
+				{Type: "notify", Title: "hello", Message: "world"},
+			}},
+		},
+	}
+	plan, _ := BuildPlan(1, Evaluation{}, current)
+	if len(plan.Actions) != 1 || plan.Actions[0].Kind != "notify" {
+		t.Fatalf("actions=%#v", plan.Actions)
+	}
+}
+
+func TestBuildBrowserPolicy_UnionSortedUnique(t *testing.T) {
+	firstDomains := []string{"z.example", "a.example"}
+	secondDomains := []string{"m.example", "a.example"}
+	evaluation := Evaluation{
+		ActiveRuleIDs: map[string]bool{"first": true, "second": true, "inactive": false},
+		Rules: map[string]config.Rule{
+			"first":    {ID: "first", Ensure: []config.Action{{Type: "browser.block", Domains: firstDomains}}},
+			"second":   {ID: "second", Ensure: []config.Action{{Type: "browser.block", Domains: secondDomains}}},
+			"inactive": {ID: "inactive", Ensure: []config.Action{{Type: "browser.block", Domains: []string{"ignored.example"}}}},
+		},
+	}
+	got := BuildBrowserPolicy(evaluation)
+	want := []string{"a.example", "m.example", "z.example"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("domains=%#v", got)
+	}
+	if fmt.Sprint(firstDomains) != "[z.example a.example]" || fmt.Sprint(secondDomains) != "[m.example a.example]" {
+		t.Fatalf("input mutated: first=%#v second=%#v", firstDomains, secondDomains)
+	}
+	got[0] = "changed.example"
+	if firstDomains[0] != "z.example" || secondDomains[0] != "m.example" {
+		t.Fatalf("output aliases input: first=%#v second=%#v", firstDomains, secondDomains)
+	}
+}
+
+func TestBuildBrowserPolicy_Empty(t *testing.T) {
+	got := BuildBrowserPolicy(Evaluation{ActiveRuleIDs: map[string]bool{"r": true}, Rules: map[string]config.Rule{"r": {ID: "r"}}})
+	if got == nil || len(got) != 0 {
+		t.Fatalf("domains=%#v", got)
+	}
+}
+
 func TestBuildPlan_Property(t *testing.T) {
 	r := rand.New(rand.NewSource(2026_08_07))
 	for i := 0; i < 100; i++ {

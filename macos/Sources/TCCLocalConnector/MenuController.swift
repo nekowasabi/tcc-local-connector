@@ -42,12 +42,18 @@ final class MenuController: ObservableObject {
     private let executor = MacPlanExecutor()
     private let watcher = LaunchWatcher()
     private let system: any MenuSystem
+    private let heartbeat: BrowserPolicyHeartbeat
     private var timer: Timer?
     private var paths: [String: String] = [:]
 
-    init(backend: any MenuBackend = BackendClient(), system: any MenuSystem = DefaultMenuSystem()) {
+    init(
+        backend: any MenuBackend = BackendClient(),
+        system: any MenuSystem = DefaultMenuSystem(),
+        heartbeat: BrowserPolicyHeartbeat = BrowserPolicyHeartbeat()
+    ) {
         self.backend = backend
         self.system = system
+        self.heartbeat = heartbeat
     }
 
     func perform(_ action: MenuAction) {
@@ -73,10 +79,12 @@ final class MenuController: ObservableObject {
     }
 
     func reloadConfig() {
+        heartbeat.stop()
         send("reload_config")
     }
 
     func pause(for seconds: Int) {
+        heartbeat.stop()
         send("pause", params: .object(["duration_seconds": .number(Double(seconds))]))
     }
 
@@ -88,6 +96,7 @@ final class MenuController: ObservableObject {
             recentWarning = "一時停止の期限を計算できませんでした"
             return
         }
+        heartbeat.stop()
         send("pause", params: .object(["until": .string(ISO8601DateFormatter().string(from: deadline))]))
     }
 
@@ -106,6 +115,7 @@ final class MenuController: ObservableObject {
     func quit() {
         timer?.invalidate()
         watcher.stop()
+        heartbeat.stop()
         Task {
             await backend.shutdown()
             system.terminate()
@@ -114,6 +124,7 @@ final class MenuController: ObservableObject {
 
     private func startBackend() async {
         guard let executableURL = Bundle.main.url(forResource: "tcc-local-connector-backend", withExtension: nil) else {
+            heartbeat.stop()
             state = .backendDown
             recentWarning = "同梱バックエンドが見つかりません"
             return
@@ -127,6 +138,7 @@ final class MenuController: ObservableObject {
                 }
             }
         } catch {
+            heartbeat.stop()
             state = .backendDown
             recentWarning = "バックエンドを起動できません"
         }
@@ -137,9 +149,13 @@ final class MenuController: ObservableObject {
             do {
                 try await backend.send(method: "status", params: nil)
                 try await backend.send(method: "config_paths", params: nil)
-                await consumeBackendMessages()
+                let receivedHealthyStatus = await consumeBackendMessages()
                 state = await backend.state
+                if !receivedHealthyStatus || state != .running {
+                    heartbeat.stop()
+                }
             } catch {
+                heartbeat.stop()
                 state = .backendDown
                 recentWarning = "バックエンドへ要求を送信できません"
             }
@@ -151,29 +167,42 @@ final class MenuController: ObservableObject {
             do {
                 try await backend.send(method: method, params: params)
             } catch {
+                heartbeat.stop()
                 state = .backendDown
                 recentWarning = "バックエンドへ要求を送信できません"
             }
         }
     }
 
-    private func consumeBackendMessages() async {
+    @discardableResult
+    private func consumeBackendMessages() async -> Bool {
+        var receivedHealthyStatus = false
+        var responseFailed = false
         for notification in await backend.takeNotifications() {
             recentWarning = notification.message.isEmpty ? notification.code : notification.message
         }
         for response in await backend.takeResponses() {
             if let error = response.error {
+                responseFailed = true
                 recentWarning = error.message.isEmpty ? error.code : error.message
                 continue
             }
             guard let result = response.result, let payload = try? JSONEncoder().encode(result) else {
+                responseFailed = true
                 continue
             }
             if let decoded = try? JSONDecoder().decode(StatusPayload.self, from: payload) {
                 status = decoded
                 lastUpdated = Date()
+                if isHealthyStatus(decoded) {
+                    receivedHealthyStatus = true
+                } else {
+                    responseFailed = true
+                }
             } else if let decoded = try? JSONDecoder().decode([String: String].self, from: payload), decoded["config"] != nil {
                 paths = decoded
+            } else {
+                responseFailed = true
             }
         }
         for plan in await backend.takePlans() {
@@ -192,10 +221,26 @@ final class MenuController: ObservableObject {
                 recentWarning = "アクション結果を報告できません"
             }
         }
+        if responseFailed {
+            heartbeat.stop()
+            return false
+        }
+        if receivedHealthyStatus {
+            return heartbeat.startOrRefresh()
+        }
+        return false
     }
 
     func processPendingMessagesForTesting() async {
         await consumeBackendMessages()
+    }
+
+    private func isHealthyStatus(_ payload: StatusPayload) -> Bool {
+        switch payload.state {
+        case "active", "fetching": return payload.parseOK
+        case "degraded": return true
+        default: return false
+        }
     }
 
     private func actionResult(_ outcome: ActionOutcome) -> (status: String, code: String?) {

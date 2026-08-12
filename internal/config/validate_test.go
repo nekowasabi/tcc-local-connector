@@ -3,9 +3,11 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/takets/tcc-local-connector/internal/constants"
+	"gopkg.in/yaml.v3"
 )
 
 func TestValidationErrorCodes(t *testing.T) {
@@ -176,6 +178,46 @@ func TestValidationErrorCodes(t *testing.T) {
 				return errs
 			},
 		},
+		{
+			name: "browser_block_requires_ensure",
+			code: codeBrowserBlockRequiresEnsure,
+			validateFn: func(t *testing.T) []ValidationError {
+				cfg := defaults()
+				cfg.Rules = []Rule{{ID: "r", OnEnter: []Action{{Type: constants.BrowserBlockActionType, Domains: []string{"example.com"}}}}}
+				_, errs := Validate(&cfg)
+				return errs
+			},
+		},
+		{
+			name: "browser_domains_required",
+			code: codeBrowserDomainsRequired,
+			validateFn: func(t *testing.T) []ValidationError {
+				cfg := defaults()
+				cfg.Rules = []Rule{{ID: "r", Ensure: []Action{{Type: constants.BrowserBlockActionType}}}}
+				_, errs := Validate(&cfg)
+				return errs
+			},
+		},
+		{
+			name: "browser_domains_limit",
+			code: codeBrowserDomainsLimit,
+			validateFn: func(t *testing.T) []ValidationError {
+				cfg := defaults()
+				cfg.Rules = []Rule{{ID: "r", Ensure: []Action{{Type: constants.BrowserBlockActionType, Domains: make([]string, constants.BrowserPolicyMaxDomains+1)}}}}
+				_, errs := Validate(&cfg)
+				return errs
+			},
+		},
+		{
+			name: "invalid_browser_domain",
+			code: codeInvalidBrowserDomain,
+			validateFn: func(t *testing.T) []ValidationError {
+				cfg := defaults()
+				cfg.Rules = []Rule{{ID: "r", Ensure: []Action{{Type: constants.BrowserBlockActionType, Domains: []string{"https://example.com"}}}}}
+				_, errs := Validate(&cfg)
+				return errs
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -192,6 +234,98 @@ func TestValidationErrorCodes(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestValidateBrowserBlock_NormalizesDomains(t *testing.T) {
+	var action Action
+	if err := yaml.Unmarshal([]byte("type: browser.block\ndomains: [X.COM., sub.x.com, XN--BCHER-KVA.EXAMPLE]\n"), &action); err != nil {
+		t.Fatal(err)
+	}
+	cfg := defaults()
+	cfg.TaskSource.Executable = "/bin/echo"
+	cfg.Rules = []Rule{{ID: "r", Ensure: []Action{action}}}
+	validated, errs := Validate(&cfg)
+	if len(errs) != 0 {
+		t.Fatalf("unexpected errors=%#v", errs)
+	}
+	got := validated.Rules[0].Ensure[0].Domains
+	want := []string{"x.com", "sub.x.com", "xn--bcher-kva.example"}
+	if len(got) != len(want) {
+		t.Fatalf("domains=%#v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("domains=%#v", got)
+		}
+	}
+}
+
+func TestValidateBrowserBlock_EnsureOnly(t *testing.T) {
+	for _, group := range []string{"on_enter", "on_exit"} {
+		t.Run(group, func(t *testing.T) {
+			cfg := defaults()
+			action := Action{Type: constants.BrowserBlockActionType, Domains: []string{"example.com"}}
+			rule := Rule{ID: "r"}
+			if group == "on_enter" {
+				rule.OnEnter = []Action{action}
+			} else {
+				rule.OnExit = []Action{action}
+			}
+			cfg.Rules = []Rule{rule}
+			_, errs := Validate(&cfg)
+			if !hasValidationCode(errs, codeBrowserBlockRequiresEnsure) {
+				t.Fatalf("errors=%#v", errs)
+			}
+		})
+	}
+}
+
+func TestValidateBrowserBlock_RejectsInvalidDomains(t *testing.T) {
+	tooMany := make([]string, constants.BrowserPolicyMaxDomains+1)
+	for i := range tooMany {
+		tooMany[i] = "example.com"
+	}
+	cases := []struct {
+		name    string
+		domains []string
+		code    string
+	}{
+		{name: "empty", domains: []string{}, code: codeBrowserDomainsRequired},
+		{name: "limit", domains: tooMany, code: codeBrowserDomainsLimit},
+		{name: "url", domains: []string{"https://example.com"}, code: codeInvalidBrowserDomain},
+		{name: "path", domains: []string{"example.com/path"}, code: codeInvalidBrowserDomain},
+		{name: "port", domains: []string{"example.com:443"}, code: codeInvalidBrowserDomain},
+		{name: "wildcard", domains: []string{"*.example.com"}, code: codeInvalidBrowserDomain},
+		{name: "ipv4", domains: []string{"192.0.2.1"}, code: codeInvalidBrowserDomain},
+		{name: "ipv6", domains: []string{"2001:db8::1"}, code: codeInvalidBrowserDomain},
+		{name: "non_ascii", domains: []string{"bücher.example"}, code: codeInvalidBrowserDomain},
+		{name: "empty_label", domains: []string{"example..com"}, code: codeInvalidBrowserDomain},
+		{name: "leading_hyphen", domains: []string{"-example.com"}, code: codeInvalidBrowserDomain},
+		{name: "trailing_hyphen", domains: []string{"example-.com"}, code: codeInvalidBrowserDomain},
+		{name: "label_too_long", domains: []string{strings.Repeat("a", 64) + ".com"}, code: codeInvalidBrowserDomain},
+		{name: "domain_too_long", domains: []string{strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 61) + ".com"}, code: codeInvalidBrowserDomain},
+		{name: "double_trailing_dot", domains: []string{"example.com.."}, code: codeInvalidBrowserDomain},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := defaults()
+			cfg.Rules = []Rule{{ID: "r", Ensure: []Action{{Type: constants.BrowserBlockActionType, Domains: tc.domains}}}}
+			_, errs := Validate(&cfg)
+			if !hasValidationCode(errs, tc.code) {
+				t.Fatalf("missing %q in errors=%#v", tc.code, errs)
+			}
+		})
+	}
+}
+
+func hasValidationCode(errors []ValidationError, code string) bool {
+	for _, err := range errors {
+		if err.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 func TestLoadInvalidReturnsNilConfig(t *testing.T) {
