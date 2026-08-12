@@ -239,6 +239,21 @@ Native MessagingのHost→拡張メッセージは次の形に固定する。`ty
 
 失敗時は変更を完了扱いにせず、該当Processへ戻って原因と証跡を更新する。再試行回数は共通ゲート方針に従い、固定回数を計画へ埋め込まない。
 
+# Remaining Tasks
+
+## RT-01: 既存 `internal/tcc2` テストの `broken pipe` 解消
+
+- `status`: open
+- `scope`: Firefox W01〜W06の変更対象外。別タスクとして扱い、Firefox差分へ混在させない。
+- `blocked_gate`: `FINAL-01`、および `scripts/verify-firefox-extension.sh` の `w06-go-regression`。
+- `reproduction`: `go test ./internal/tcc2 -race -count=1`
+- `observed_failure`: `TestSessionOpenCallClose` と、実行によっては `TestOpen_Success` が `open session failed: write |1: broken pipe` で失敗する。
+- `baseline_evidence`: 現在のFirefox差分を含まない `git archive HEAD` の一時展開でも同じ失敗を再現する。`git diff -- internal/tcc2` は空であり、Firefox実装による回帰ではない。
+- `suggested_investigation`: テスト用fake MCPプロセスが `initialize` 応答後すぐ終了する一方、`Open` が続けて `notifications/initialized` をstdinへ書く競合を確認し、テストfixtureまたは既存MCPセッション処理の責務境界で修正する。
+- `completion_condition`: 変更前後の意図を示す再現テストを追加し、`go test ./internal/tcc2 -race -count=1` と `go test ./... -race -count=1` が終了コード0になる。その後 `bash scripts/verify-firefox-extension.sh` を再実行し、`FINAL-01` を更新する。
+
+Firefox ESR 140.13.0による通常窓遮断、Host切断、17秒後の期限切れ、古いgeneration、正本復帰、private非作用の受入項目は実施済みであり、RT-01には含めない。
+
 # Research Basis
 
 - 現行コード: `internal/config/config.go:57`、`internal/config/validate.go:125`、`internal/rules/plan.go:67`、`internal/protocol/server.go:21`、`macos/Sources/TCCLocalConnector/MenuController.swift:115`。

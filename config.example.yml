@@ -15,3 +15,5 @@ rules:
         title: Example
         message: Example task is running
         level: info
+      - type: browser.block
+        domains: [example.com, xn--bcher-kva.example]

@@ -128,3 +128,6 @@
 - `invalid_state`
 - `internal_error`
 - `config_error`
+## Firefox Native Messaging との境界
+
+既存の NDJSON protocol version 1 は変更しません。Firefox Native Messaging は別のフレーミングで、メッセージ本文の前に 4 バイトの little-endian 長を置き、本文長の上限を 65536 バイトとします。Native Messaging Host は Firefox から接続されている間だけ動作し、切断時に終了します。`browser.block` は設定から別のポリシー状態へ出力するため、NDJSON protocol version 1 に event は追加しません。

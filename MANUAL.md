@@ -132,3 +132,37 @@ chmod 600 ~/.config/tcc-local-connector/config.yml
 - [docs/config-schema.md](docs/config-schema.md): 設定項目の完全仕様
 - [docs/protocol-v1.md](docs/protocol-v1.md): バックエンド通信仕様
 - [docs/macos-verification-2026-08-07.md](docs/macos-verification-2026-08-07.md): 実機検証結果
+## 10. Firefox ESR での利用
+
+### 10-1. 導入
+
+1. Firefox ESR を導入します。
+2. `bash scripts/make-app-bundle.sh` で Native Messaging Host を含むアプリを生成します。
+3. `bash scripts/install-firefox-native-host.sh` で Host マニフェストを登録します。
+4. Firefox で `about:debugging#/runtime/this-firefox` を開き、「一時的なアドオンを読み込む」から `firefox-extension/manifest.json` を選択します。
+
+拡張は `nativeMessaging`、`webRequest`、`webRequestBlocking`、`<all_urls>` の権限を使用します。Host マニフェストのディレクトリ権限は `0700`、ファイル権限は `0600` です。一時拡張は Firefox 終了時に解除されます。
+
+### 10-2. 設定と確認
+
+設定の正本は `~/.config/tcc-local-connector/config.yml` だけです。遮断対象は `rules[].ensure[]` に記述します。
+
+```yaml
+rules:
+  - id: focus
+    match:
+      task_name_contains: [Focus]
+    ensure:
+      - type: browser.block
+        domains: [example.com]
+```
+
+最初は `safety.dry_run: true` で起動し、遮断されず予定集合の変更だけが通知されることを確認します。その後 `false` にして、通常ウィンドウの対象ドメインが説明ページへ移ることを確認します。プライベートウィンドウは `incognito=not_allowed` のため対象外です。
+
+設定欠損・破損、pause、取得失敗の猶予超過、制御解放、Host の未接続・切断、ポリシーまたは所有者心拍の期限切れでは fail-open となります。障害後は最悪 16.000 秒以下で通常閲覧の許可へ復帰します。`bash scripts/verify-firefox-extension.sh` を実行し、既存の NDJSON、アプリ制御、通知、`process.*`、`command.run` に回帰がないことも確認します。
+
+### 10-3. 削除とロールバック
+
+削除時は Firefox の一時拡張を削除し、登録時と同じアプリを移動・削除する前に `bash scripts/uninstall-firefox-native-host.sh --app /path/to/TCCLocalConnector.app` を実行して、`browser.block` を `config.yml` から除去します。安全上、登録済みアプリが存在せず Host の絶対パスを照合できない状態では削除スクリプトは失敗します。ロールバック時は拡張を無効化して Host マニフェストを削除し、旧アプリを配置する場合は `bash scripts/install-firefox-native-host.sh --app /path/to/TCCLocalConnector.app` で旧 Host を再登録します。
+
+この一時導入に Mozilla の署名は不要です。署名済み拡張の作成・配布、更新チャネルの運用は本リポジトリの対象外です。

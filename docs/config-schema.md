@@ -69,10 +69,11 @@
   - 実行中タスク0件時は `contains` は偽、`not_contains` は真。
   - 空文字は禁止。
 - `ensure` / `on_enter` / `on_exit` は各配列で最大20件。
+- `browser.block` は `ensure` だけで使用でき、`on_enter` / `on_exit` では拒否される。
 - `app.stop` / `process.stop` / `command.run` は `grace_seconds` / `timeout_seconds` 等の範囲チェックあり。
 - 空配列も妥当。
 
-## Action 6 種
+## Action 7 種
 
 ### `app.start`
 
@@ -117,9 +118,18 @@
 - `message`（必須、最大500 runes）
 - `level`（optional、`info|warn|error` のみ、空文字も許容）
 
-## 検証エラーコード（15種）
+### `browser.block`
 
-ここに挙げる 15 種は `internal/config/validate.go` の検証結果として返る。
+- `type: "browser.block"`
+- `domains`（array[string], required）: 1..128件のDNS名
+- 各要素はASCII小文字化され、末尾のドット1個が除去される。
+- 全体は253バイト以下、各ラベルは63バイト以下のASCII英数字または `-` とし、ラベルの先頭・末尾の `-` と空ラベルは禁止する。
+- URL、path、port、wildcard、IPv4/IPv6、非ASCIIは拒否する。IDNはpunycodeで指定する。
+- このアクションはFirefox向けポリシーへ分離され、既存の `Plan.Actions` には出力されない。
+
+## 検証エラーコード（19種）
+
+ここに挙げる 19 種は `internal/config/validate.go` の検証結果として返る。
 
 1. `unsupported_config_version`
 2. `missing_required_field`
@@ -136,9 +146,14 @@
 13. `shell_not_allowed`
 14. `forbidden_safety_flag`
 15. `rule_conflict_same_priority`
+16. `browser_block_requires_ensure`
+17. `browser_domains_required`
+18. `browser_domains_limit`
+19. `invalid_browser_domain`
 
 ## 取り扱い上の要点
 
 - `browser.redirect` は実行時に `unsupported_action`（明示的拒否）。
+- 設定ファイルの正本は `~/.config/tcc-local-connector/config.yml`。
 - 権限違反（`ErrInsecurePermissions`）は設定値の解析成功後にスキーマとは別経路で拒否され、`shell` 実行可否の判定には影響しない。
 - スキーマ違反は `ValidationError[]` にして行単位で通知する。
