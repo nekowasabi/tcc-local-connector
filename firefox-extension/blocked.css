@@ -1,0 +1,23 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  display: grid;
+  min-height: 100vh;
+  margin: 0;
+  place-items: center;
+}
+
+main {
+  max-width: 40rem;
+  padding: 2rem;
+  text-align: center;
+}
+
+#blocked-host {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+}

@@ -1,0 +1,27 @@
+{
+  "manifest_version": 2,
+  "name": "TCC Local Connector Domain Blocker",
+  "version": "1.0.0",
+  "description": "Blocks task-defined domains while TCC Local Connector is active.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "firefox-domain-blocker@tcc-local-connector.takets.jp"
+    }
+  },
+  "permissions": [
+    "nativeMessaging",
+    "webRequest",
+    "webRequestBlocking",
+    "<all_urls>"
+  ],
+  "background": {
+    "scripts": [
+      "background.js"
+    ],
+    "persistent": true
+  },
+  "web_accessible_resources": [
+    "blocked.html"
+  ],
+  "incognito": "not_allowed"
+}
