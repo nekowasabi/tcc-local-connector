@@ -3,8 +3,8 @@ package ledger
 import (
 	"context"
 	"encoding/json"
-	"os/exec"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"syscall"
@@ -169,11 +169,9 @@ func TestManagerStop_Refused_NoRetry(t *testing.T) {
 	manager := NewManager(ledger)
 	ctx := context.Background()
 
+	ready := filepath.Join(t.TempDir(), "stubborn-ready")
 	helper := exec.Command(os.Args[0], "-test.run=TestManagerStop_RefusedHelperProcess")
-	helper.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
-	if err := helper.Start(); err != nil {
-		t.Fatalf("start helper: %v", err)
-	}
+	helper.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1", "GO_HELPER_READY_PATH="+ready)
 	spec := StartSpec{
 		ProcessID:  "stubborn",
 		Executable: helper.Path,
@@ -182,6 +180,19 @@ func TestManagerStop_Refused_NoRetry(t *testing.T) {
 	}
 	if status, err := manager.Start(ctx, spec, false); err != nil || status != "started" {
 		t.Fatalf("start status=%q err=%v", status, err)
+	}
+	// Why: Wait until the helper ignores SIGTERM before testing the refused path.
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("stat helper readiness: %v", err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("helper did not become ready")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	stop, err := manager.Stop(ctx, "stubborn", 50*time.Millisecond, false)
@@ -213,9 +224,15 @@ func TestManagerStop_RefusedHelperProcess(t *testing.T) {
 	}
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, syscall.SIGTERM)
-	<-ch
-	for {
+	ready := os.Getenv("GO_HELPER_READY_PATH")
+	if ready == "" {
+		t.Fatal("missing helper readiness path")
 	}
+	if err := os.WriteFile(ready, nil, 0o600); err != nil {
+		t.Fatalf("write helper readiness: %v", err)
+	}
+	<-ch
+	select {}
 }
 
 func TestManagerStop_ArgsMismatch_NoSignal(t *testing.T) {

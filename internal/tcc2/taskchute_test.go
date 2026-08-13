@@ -18,6 +18,7 @@ func TestSessionOpenCallClose(t *testing.T) {
 	program := `#!/bin/sh
 read line
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","serverInfo":{"name":"fake","version":"1"}}}'
+read line
 exit 0
 `
 	if err := os.WriteFile(script, []byte(program), 0o700); err != nil {
