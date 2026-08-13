@@ -130,14 +130,14 @@ light_mode: false
 
 | Wave | Processes | Depends on | Disjoint | Status |
 |---|---|---|---|---|
-| W01 | P01 | - | y | ☐ planning |
-| W02 | P02 | W01 | y | ☐ planning |
-| W03 | P03, P04 | W02 | y（状態契約を共有するため確認後並列） | ☐ planning |
-| W04 | P05 | W03 | y | ☐ planning |
-| W05 | P06 | W04 | y | ☐ planning |
-| W06 | P07 | W05 | n（直列） | ☐ planning |
+| W01 | P01 | - | y | - [x] completed |
+| W02 | P02 | W01 | y | - [x] completed |
+| W03 | P03, P04 | W02 | y（状態契約を共有するため確認後並列） | - [x] completed |
+| W04 | P05 | W03 | y | - [x] completed |
+| W05 | P06 | W04 | y | - [x] completed |
+| W06 | P07 | W05 | n（直列） | - [ ] pending: 対象Firefox ESRの手動受入記録（ESR起動環境の復旧待ち） |
 
-**Overall**: ☐ 0/7 completed
+**Overall**: 6/7 completed
 
 # Behavior Specification
 
@@ -243,14 +243,14 @@ Native MessagingのHost→拡張メッセージは次の形に固定する。`ty
 
 ## RT-01: 既存 `internal/tcc2` テストの `broken pipe` 解消
 
-- `status`: open
-- `scope`: Firefox W01〜W06の変更対象外。別タスクとして扱い、Firefox差分へ混在させない。
-- `blocked_gate`: `FINAL-01`、および `scripts/verify-firefox-extension.sh` の `w06-go-regression`。
+- `status`: completed
+- `scope`: Firefox W06の総合回帰を安定化するため、テストfixtureだけを最小修正した。
+- `resolved_gate`: `FINAL-01`、および `scripts/verify-firefox-extension.sh` の `w06-go-regression`。
 - `reproduction`: `go test ./internal/tcc2 -race -count=1`
-- `observed_failure`: `TestSessionOpenCallClose` と、実行によっては `TestOpen_Success` が `open session failed: write |1: broken pipe` で失敗する。
-- `baseline_evidence`: 現在のFirefox差分を含まない `git archive HEAD` の一時展開でも同じ失敗を再現する。`git diff -- internal/tcc2` は空であり、Firefox実装による回帰ではない。
+- `resolution`: fake MCPプロセスが `initialize` 応答の後に `notifications/initialized` を受信するまでstdinを保持するようにし、初期化プロトコル上正しい書込みとの競合を解消した。
+- `baseline_evidence`: `Open` は `initialize` 応答後に `notifications/initialized` を送るが、旧fake MCPは直後にstdinを閉じていたため、実装ではなくfixtureのプロトコル不整合で再現した。
 - `suggested_investigation`: テスト用fake MCPプロセスが `initialize` 応答後すぐ終了する一方、`Open` が続けて `notifications/initialized` をstdinへ書く競合を確認し、テストfixtureまたは既存MCPセッション処理の責務境界で修正する。
-- `completion_condition`: 変更前後の意図を示す再現テストを追加し、`go test ./internal/tcc2 -race -count=1` と `go test ./... -race -count=1` が終了コード0になる。その後 `bash scripts/verify-firefox-extension.sh` を再実行し、`FINAL-01` を更新する。
+- `verification`: `go test ./internal/tcc2 -race -count=20`、`go test ./... -race -count=1`、および `bash scripts/verify-firefox-extension.sh` が終了コード0。
 
 Firefox ESR 140.13.0による通常窓遮断、Host切断、17秒後の期限切れ、古いgeneration、正本復帰、private非作用の受入項目は実施済みであり、RT-01には含めない。
 
