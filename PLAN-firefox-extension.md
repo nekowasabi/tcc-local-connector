@@ -135,7 +135,7 @@ light_mode: false
 | W03 | P03, P04 | W02 | y（状態契約を共有するため確認後並列） | - [x] completed |
 | W04 | P05 | W03 | y | - [x] completed |
 | W05 | P06 | W04 | y | - [x] completed |
-| W06 | P07 | W05 | n（直列） | - [ ] pending: 対象Firefox ESRの手動受入記録（ESR起動環境の復旧待ち） |
+| W06 | P07 | W05 | n（直列） | - [ ] pending: 対象Firefox ESRの手動受入記録 |
 
 **Overall**: 6/7 completed
 
