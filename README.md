@@ -100,11 +100,10 @@ TaskChute Cloud 2 の実行中タスクを取得し、設定したルールに�
 - 台帳: `~/.local/state/tcc-local-connector/managed-processes.json`
 ## Firefox ESR 拡張の導入
 
-Firefox ESR を導入してから、次の順でアプリ同梱、Native Messaging Host 登録、一時拡張の読み込みを行います。
+Firefox ESR を導入してから、アプリをビルドし、一時拡張を読み込みます。Native Messaging Host は `make dev` / `scripts/make-app-bundle.sh` とアプリ起動時に自動登録します。ブラウザを増やすときは `NativeMessagingCatalog` にエントリを足します（Chrome は `allowedOrigins` を埋めた時点で有効）。
 
 ```bash
-bash scripts/make-app-bundle.sh
-bash scripts/install-firefox-native-host.sh
+make dev
 ```
 
 Firefox で `about:debugging#/runtime/this-firefox` を開き、「一時的なアドオンを読み込む」から `firefox-extension/manifest.json` を選択します。設定の正本は `~/.config/tcc-local-connector/config.yml` だけです。`browser.block` は `ensure` に記述します。

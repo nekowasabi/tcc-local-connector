@@ -137,9 +137,8 @@ chmod 600 ~/.config/tcc-local-connector/config.yml
 ### 10-1. 導入
 
 1. Firefox ESR を導入します。
-2. `bash scripts/make-app-bundle.sh` で Native Messaging Host を含むアプリを生成します。
-3. `bash scripts/install-firefox-native-host.sh` で Host マニフェストを登録します。
-4. Firefox で `about:debugging#/runtime/this-firefox` を開き、「一時的なアドオンを読み込む」から `firefox-extension/manifest.json` を選択します。
+2. `make dev` または `bash scripts/make-app-bundle.sh` でアプリを生成します。Host マニフェストはビルド時とアプリ起動時に自動登録されます。
+3. Firefox で `about:debugging#/runtime/this-firefox` を開き、「一時的なアドオンを読み込む」から `firefox-extension/manifest.json` を選択します。
 
 拡張は `nativeMessaging`、`webRequest`、`webRequestBlocking`、`<all_urls>` の権限を使用します。Host マニフェストのディレクトリ権限は `0700`、ファイル権限は `0600` です。一時拡張は Firefox 終了時に解除されます。
 

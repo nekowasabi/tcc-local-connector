@@ -71,6 +71,11 @@ final class MenuController: ObservableObject {
     }
 
     func start() {
+        // Why: Register hosts here instead of a per-user CLI. Reason: CLI-less users
+        // cannot run install-firefox-native-host.sh, and the manifest path must follow the running app.
+        if !NativeMessagingInstaller.registerFromAppBundle() {
+            recentWarning = "ブラウザ拡張の Host を登録できません"
+        }
         Task { await startBackend() }
     }
 
