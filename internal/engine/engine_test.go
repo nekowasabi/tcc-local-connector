@@ -203,10 +203,42 @@ func TestEngine_ReleaseControlsPublishesEmptyPolicy(t *testing.T) {
 	if _, err := engine.RunCycleNow(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	engine.ReportActions(engine.Snapshot().CycleID, []ActionResult{{ActionID: "1-1", Status: "failed"}})
+	engine.cfg.TaskSource.Executable = filepath.Join(t.TempDir(), "missing-tcc2")
+	if _, err := engine.RunCycleNow(context.Background()); err == nil {
+		t.Fatal("RunCycleNow should fail after fetch error")
+	}
+	// Why: grace_expired uses firstFailure, so a second failed cycle makes now > firstFailure when grace is 0.
+	if _, err := engine.RunCycleNow(context.Background()); err == nil {
+		t.Fatal("RunCycleNow should fail after fetch error")
+	}
 	policy := readBrowserPolicy(t, policyPath)
 	if policy.Enforce || policy.DryRun || len(policy.Domains) != 0 || len(policy.PlannedDomains) != 0 {
 		t.Fatalf("release-controls policy = %#v", policy)
+	}
+}
+
+func TestReportActionsKeepsBrowserPolicyWhenFrontendActionFails(t *testing.T) {
+	fake := createActiveFakeMCPScript(t)
+	policyPath := filepath.Join(t.TempDir(), constants.BrowserPolicyFileName)
+	engine := New(Deps{BrowserPolicyPath: policyPath})
+	engine.cfg = browserTestConfig(fake, false)
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	before := readBrowserPolicy(t, policyPath)
+	if !before.Enforce || !reflect.DeepEqual(before.Domains, []string{"example.com"}) {
+		t.Fatalf("setup policy = %#v", before)
+	}
+	engine.ReportActions(engine.Snapshot().CycleID, []ActionResult{
+		{ActionID: "1-1", Status: "accepted"},
+		{ActionID: "1-2", Status: "refused", Code: "quit_refused"},
+	})
+	policy := readBrowserPolicy(t, policyPath)
+	if !policy.Enforce || policy.DryRun || !reflect.DeepEqual(policy.Domains, []string{"example.com"}) || !reflect.DeepEqual(policy.PlannedDomains, []string{"example.com"}) {
+		t.Fatalf("policy after refused app.stop = %#v", policy)
+	}
+	if policy.Generation != before.Generation {
+		t.Fatalf("generation changed from %d to %d", before.Generation, policy.Generation)
 	}
 }
 

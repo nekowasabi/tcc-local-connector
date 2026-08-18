@@ -480,15 +480,12 @@ func (e *Engine) ReportActions(cycleID int64, results []ActionResult) (int, int)
 		return 0, len(results)
 	}
 	e.mu.Unlock()
-	releaseControls := false
 	for _, result := range results {
 		if result.Status == "failed" || result.Status == "refused" || result.Status == "timeout" {
-			releaseControls = true
+			// Why: Notify the refused action instead of emptying browser policy.
+			// app.stop and browser.block are independent ensure actions; Plan.Actions never includes browser.block.
 			e.emitEvent("notify", map[string]any{"level": "warn", "code": "action_refused", "title": "アクションを実行できませんでした", "message": "アクション " + result.ActionID + " は " + result.Status + " でした", "at": time.Now().UTC()})
 		}
-	}
-	if releaseControls {
-		_ = e.publishEmptyBrowserPolicy()
 	}
 	return len(results), 0
 }
