@@ -55,11 +55,19 @@ func BuildPlan(cycleID int64, previous, current Evaluation) (Plan, []Conflict) {
 	for index := range selected {
 		selected[index].ActionID = fmt.Sprintf("%d-%d", cycleID, index+1)
 	}
-	stops := []string{}
+	// Why: Union distinct bundle IDs like browser.block domains, instead of
+	// treating later app.stop entries as replacements of the first.
+	seen := map[string]struct{}{}
+	stops := make([]string, 0)
 	for _, action := range selected {
-		if action.Kind == "app.stop" {
-			stops = append(stops, action.BundleID)
+		if action.Kind != "app.stop" || action.BundleID == "" {
+			continue
 		}
+		if _, ok := seen[action.BundleID]; ok {
+			continue
+		}
+		seen[action.BundleID] = struct{}{}
+		stops = append(stops, action.BundleID)
 	}
 	sort.Strings(stops)
 	return Plan{CycleID: cycleID, Actions: selected, EnforceStopBundleIDs: stops}, conflicts
@@ -67,12 +75,28 @@ func BuildPlan(cycleID int64, previous, current Evaluation) (Plan, []Conflict) {
 func actions(values []config.Action, reason string, priority int) []PlannedAction {
 	output := []PlannedAction{}
 	for _, value := range values {
-		if value.Type != "app.start" && value.Type != "app.stop" && value.Type != "notify" {
+		if value.Type == "app.stop" {
+			for _, id := range appStopBundleIDs(value) {
+				output = append(output, PlannedAction{Kind: "app.stop", BundleID: id, GraceSeconds: value.GraceSeconds, Reason: reason, Priority: priority})
+			}
+			continue
+		}
+		if value.Type != "app.start" && value.Type != "notify" {
 			continue
 		}
 		output = append(output, PlannedAction{Kind: value.Type, BundleID: value.BundleID, ProcessID: value.ProcessID, Executable: value.Executable, Args: value.Args, WorkingDir: value.WorkingDir, Env: value.Env, GraceSeconds: value.GraceSeconds, TimeoutSeconds: value.TimeoutSeconds, Shell: value.Shell, Title: value.Title, Message: value.Message, Reason: reason, Priority: priority})
 	}
 	return output
+}
+
+func appStopBundleIDs(value config.Action) []string {
+	if len(value.BundleIDs) > 0 {
+		return append([]string(nil), value.BundleIDs...)
+	}
+	if value.BundleID != "" {
+		return []string{value.BundleID}
+	}
+	return nil
 }
 func targetKey(action PlannedAction) string {
 	if action.Kind == "notify" {

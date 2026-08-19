@@ -141,6 +141,74 @@ func TestBuildPlan_EnsureIdempotent(t *testing.T) {
 	}
 }
 
+func TestBuildPlan_OneAppStopBundleIDsExpandsPerID(t *testing.T) {
+	cfg := config.Config{
+		Version:    2,
+		TaskSource: config.TaskSource{Type: "tcc2_mcp", Executable: "/bin/echo", Args: []string{"mcp"}},
+		Polling:    config.Polling{IntervalSeconds: 60, TimeoutSeconds: 20, FailureGraceSeconds: 180, FailurePolicy: "release_controls"},
+		Logging:    config.Logging{Level: "info", RetainDays: 14},
+		Rules: []config.Rule{{ID: "stop-inv", Ensure: []config.Action{
+			{Type: "app.stop", BundleIDs: []string{"com.tinyspeck.slackmacgap", "com.amazon.Lassen"}},
+		}}},
+	}
+	validated, errs := config.Validate(&cfg)
+	if len(errs) != 0 || validated == nil {
+		t.Fatalf("validate=%#v %#v", validated, errs)
+	}
+	current := Evaluation{
+		ActiveRuleIDs: map[string]bool{"stop-inv": true},
+		Rules:         map[string]config.Rule{"stop-inv": validated.Rules[0]},
+	}
+	plan, conflicts := BuildPlan(1, Evaluation{}, current)
+	if len(conflicts) != 0 {
+		t.Fatalf("conflicts=%#v", conflicts)
+	}
+	got := map[string]bool{}
+	for _, action := range plan.Actions {
+		if action.Kind != "app.stop" {
+			t.Fatalf("unexpected action=%#v", action)
+		}
+		got[action.BundleID] = true
+	}
+	if len(plan.Actions) != 2 || !got["com.tinyspeck.slackmacgap"] || !got["com.amazon.Lassen"] {
+		t.Fatalf("actions=%#v", plan.Actions)
+	}
+	want := []string{"com.amazon.Lassen", "com.tinyspeck.slackmacgap"}
+	if fmt.Sprint(plan.EnforceStopBundleIDs) != fmt.Sprint(want) {
+		t.Fatalf("enforce=%#v want=%#v", plan.EnforceStopBundleIDs, want)
+	}
+}
+
+func TestBuildPlan_MultipleEnsureAppStopsAreAllPlanned(t *testing.T) {
+	current := Evaluation{
+		ActiveRuleIDs: map[string]bool{"stop-inv": true},
+		Rules: map[string]config.Rule{
+			"stop-inv": {ID: "stop-inv", Ensure: []config.Action{
+				{Type: "app.stop", BundleID: "com.tinyspeck.slackmacgap"},
+				{Type: "app.stop", BundleID: "com.amazon.Lassen"},
+			}},
+		},
+	}
+	plan, conflicts := BuildPlan(1, Evaluation{}, current)
+	if len(conflicts) != 0 {
+		t.Fatalf("conflicts=%#v", conflicts)
+	}
+	got := map[string]bool{}
+	for _, action := range plan.Actions {
+		if action.Kind != "app.stop" {
+			t.Fatalf("unexpected action=%#v", action)
+		}
+		got[action.BundleID] = true
+	}
+	if len(plan.Actions) != 2 || !got["com.tinyspeck.slackmacgap"] || !got["com.amazon.Lassen"] {
+		t.Fatalf("actions=%#v", plan.Actions)
+	}
+	want := []string{"com.amazon.Lassen", "com.tinyspeck.slackmacgap"}
+	if fmt.Sprint(plan.EnforceStopBundleIDs) != fmt.Sprint(want) {
+		t.Fatalf("enforce=%#v want=%#v", plan.EnforceStopBundleIDs, want)
+	}
+}
+
 func TestBuildPlan_EnforceStopBundleIDsMatchActions(t *testing.T) {
 	current := Evaluation{
 		ActiveRuleIDs: map[string]bool{"r": true},

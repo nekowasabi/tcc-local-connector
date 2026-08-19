@@ -105,6 +105,7 @@ final class MacPlanExecutor: PlanExecutor, @unchecked Sendable {
             case "app.start":
                 outcomes.append(await startApp(action))
             case "app.stop":
+                // Why: Keep going after quit_refused instead of aborting later ensure app.stop entries.
                 outcomes.append(await stopApp(action))
             case "notify":
                 outcomes.append(await notify(action))

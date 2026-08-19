@@ -84,7 +84,7 @@
 ### `app.stop`
 
 - `type: "app.stop"`
-- `bundle_id`（必須）
+- `bundle_id`（単一対象）または `bundle_ids`（複数対象、`browser.block` の `domains` と同じリスト形式）。少なくとも一方が必須
 - `grace_seconds`（optional / 範囲 `1..120`）
 
 ### `process.start`

@@ -236,6 +236,52 @@ func TestValidationErrorCodes(t *testing.T) {
 	}
 }
 
+func TestValidateAppStopListDoesNotSelfConflict(t *testing.T) {
+	cfg := defaults()
+	cfg.TaskSource.Executable = "/bin/echo"
+	cfg.Rules = []Rule{{ID: "r", Ensure: []Action{
+		{Type: "app.stop", BundleIDs: []string{"com.tinyspeck.slackmacgap", "com.amazon.Lassen"}},
+	}}}
+	if _, errs := Validate(&cfg); len(errs) != 0 {
+		t.Fatalf("errs=%#v", errs)
+	}
+}
+
+func TestValidateAppStopListConflictsWithStartOnSameID(t *testing.T) {
+	cfg := defaults()
+	cfg.TaskSource.Executable = "/bin/echo"
+	cfg.Rules = []Rule{
+		{ID: "a", Priority: 10, Ensure: []Action{{Type: "app.start", BundleID: "com.example.app"}}},
+		{ID: "b", Priority: 10, Ensure: []Action{{Type: "app.stop", BundleIDs: []string{"com.example.app", "com.other.app"}}}},
+	}
+	_, errs := Validate(&cfg)
+	found := false
+	for _, err := range errs {
+		if err.Code == codeRuleConflictSamePriority {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("errs=%#v", errs)
+	}
+}
+
+func TestValidateAppStopEmptyBundleIDsRejected(t *testing.T) {
+	cfg := defaults()
+	cfg.TaskSource.Executable = "/bin/echo"
+	cfg.Rules = []Rule{{ID: "r", Ensure: []Action{{Type: "app.stop", BundleIDs: []string{}}}}}
+	_, errs := Validate(&cfg)
+	found := false
+	for _, err := range errs {
+		if err.Code == codeMissingRequiredField {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("errs=%#v", errs)
+	}
+}
+
 func TestValidateBrowserBlock_NormalizesDomains(t *testing.T) {
 	var action Action
 	if err := yaml.Unmarshal([]byte("type: browser.block\ndomains: [X.COM., sub.x.com, XN--BCHER-KVA.EXAMPLE]\n"), &action); err != nil {

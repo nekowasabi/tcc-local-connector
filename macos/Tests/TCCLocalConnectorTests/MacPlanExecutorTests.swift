@@ -68,6 +68,28 @@ final class MacPlanExecutorTests: XCTestCase {
         XCTAssertTrue(app.wasTerminated)
     }
 
+    func testStopApp_AttemptsLaterTargetAfterFirstQuitRefused() async {
+        let slack = FakeRunningApplication(bundleID: "com.tinyspeck.slackmacgap")
+        slack.shouldTerminate = false
+        let kindle = FakeRunningApplication(bundleID: "com.amazon.Lassen")
+        kindle.shouldTerminate = true
+        let workspace = FakeLaunchWorkspace(runningApplications: [
+            "com.tinyspeck.slackmacgap": [slack],
+            "com.amazon.Lassen": [kindle],
+        ])
+        let actions = [
+            PlanAction(type: "app.stop", id: "1-1", bundleID: "com.tinyspeck.slackmacgap", graceSeconds: 1),
+            PlanAction(type: "app.stop", id: "1-2", bundleID: "com.amazon.Lassen", graceSeconds: 1),
+        ]
+        let executor = MacPlanExecutor(workspace: workspace, startTimeoutSeconds: 0.1)
+
+        let outcomes = await executor.execute(actions, dryRun: false)
+
+        XCTAssertEqual(outcomes, [.rejected("quit_refused"), .accepted])
+        XCTAssertEqual(workspace.terminatedBundleIDs, ["com.tinyspeck.slackmacgap", "com.amazon.Lassen"])
+        XCTAssertTrue(kindle.wasTerminated)
+    }
+
     func testStopApp_RefusedNoRetry() async {
         let app = FakeRunningApplication(bundleID: "com.example.app")
         app.shouldTerminate = false
@@ -147,6 +169,7 @@ private final class FakeRunningApplication: RunningApplication, @unchecked Senda
 
 private final class FakeLaunchWorkspace: LaunchWorkspace, @unchecked Sendable {
     private(set) var openedBundleIDs: [String] = []
+    private(set) var terminatedBundleIDs: [String] = []
     private var appStore: [String: [FakeRunningApplication]]
     let openShouldTimeout: Bool
     let openShouldDelay: Bool
@@ -198,6 +221,7 @@ private final class FakeLaunchWorkspace: LaunchWorkspace, @unchecked Sendable {
     }
 
     func terminate(bundleID: String) {
+        terminatedBundleIDs.append(bundleID)
         appStore[bundleID]?.forEach { _ = $0.terminate() }
     }
 }

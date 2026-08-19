@@ -11,6 +11,8 @@ rules:
     ensure:
       - type: app.start
         bundle_id: example.application
+      - type: app.stop
+        bundle_ids: [example.distraction, example.other]
       - type: notify
         title: Example
         message: Example task is running

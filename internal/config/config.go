@@ -57,6 +57,7 @@ type Match struct {
 type Action struct {
 	Type           string            `yaml:"type" json:"type"`
 	BundleID       string            `yaml:"bundle_id" json:"bundle_id"`
+	BundleIDs      []string          `yaml:"bundle_ids" json:"bundle_ids"`
 	ProcessID      string            `yaml:"process_id" json:"process_id"`
 	Executable     string            `yaml:"executable" json:"executable"`
 	Args           []string          `yaml:"args" json:"args"`

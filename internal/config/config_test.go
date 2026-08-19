@@ -114,6 +114,93 @@ func TestConfigValidationCoversActionKindsAndBoundaries(t *testing.T) {
 	}
 }
 
+func TestExampleConfigLoads(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "config.example.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "config.yml")
+	if err := os.WriteFile(path, src, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, errs, loadErr := Load(path)
+	if loadErr != nil || cfg == nil || len(errs) != 0 {
+		t.Fatalf("example Load = %#v %#v %v", cfg, errs, loadErr)
+	}
+	var startID string
+	var stopIDs []string
+	for _, action := range cfg.Rules[0].Ensure {
+		if action.Type == "app.start" {
+			startID = action.BundleID
+		}
+		if action.Type == "app.stop" {
+			stopIDs = action.BundleIDs
+		}
+	}
+	if startID == "" || len(stopIDs) < 2 {
+		t.Fatalf("example actions start=%q stop=%#v", startID, stopIDs)
+	}
+	for _, id := range stopIDs {
+		if id == startID {
+			t.Fatalf("example app.stop overlaps app.start %q", startID)
+		}
+	}
+}
+
+func TestLoadAppStopBundleIDsList(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yml")
+	payload := []byte(`version: 2
+task_source:
+  executable: /bin/echo
+rules:
+  - id: stop-inv
+    ensure:
+      - type: app.stop
+        bundle_ids:
+          - com.tinyspeck.slackmacgap
+          - com.amazon.Lassen
+`)
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, errs, err := Load(path)
+	if err != nil || cfg == nil || len(errs) != 0 {
+		t.Fatalf("Load = %#v %#v %v", cfg, errs, err)
+	}
+	got := cfg.Rules[0].Ensure[0].BundleIDs
+	want := []string{"com.tinyspeck.slackmacgap", "com.amazon.Lassen"}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("bundle_ids=%#v", got)
+	}
+}
+
+func TestLoadAppStopSingleBundleID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yml")
+	payload := []byte(`version: 2
+task_source:
+  executable: /bin/echo
+rules:
+  - id: stop-one
+    ensure:
+      - type: app.stop
+        bundle_id: com.tinyspeck.slackmacgap
+`)
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, errs, err := Load(path)
+	if err != nil || cfg == nil || len(errs) != 0 {
+		t.Fatalf("Load = %#v %#v %v", cfg, errs, err)
+	}
+	action := cfg.Rules[0].Ensure[0]
+	if action.BundleID != "com.tinyspeck.slackmacgap" {
+		t.Fatalf("bundle_id=%q", action.BundleID)
+	}
+	if len(action.BundleIDs) != 1 || action.BundleIDs[0] != "com.tinyspeck.slackmacgap" {
+		t.Fatalf("normalized bundle_ids=%#v", action.BundleIDs)
+	}
+}
+
 func TestLoadAndPermissionsSuccessAndFailures(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yml")

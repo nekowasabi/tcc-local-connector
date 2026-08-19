@@ -144,21 +144,29 @@ func validateAction(action *Action, path, group string, allowShell bool, process
 		}
 	case "browser.redirect":
 		return []ValidationError{validation(codeUnsupportedAction, path+".type")}
-	case "app.start", "app.stop":
+	case "app.start":
+		if len(action.BundleIDs) != 0 {
+			errors = append(errors, validation(codeUnsupportedValue, path+".bundle_ids"))
+		}
 		if action.BundleID == "" {
 			errors = append(errors, validation(codeMissingRequiredField, path+".bundle_id"))
 		} else if !reBundleID.MatchString(action.BundleID) {
 			errors = append(errors, validation(codeInvalidIdentifier, path+".bundle_id"))
+		} else {
+			recordAppConflict(conflicts, priority, action.Type, action.BundleID, path, &errors)
 		}
-		if action.Type == "app.stop" && action.GraceSeconds != 0 && outOfRange(action.GraceSeconds, constants.MinGraceSeconds, constants.MaxGraceSeconds) {
+	case "app.stop":
+		ids, idErrors := validateAppStopIDs(action, path)
+		errors = append(errors, idErrors...)
+		if action.GraceSeconds != 0 && outOfRange(action.GraceSeconds, constants.MinGraceSeconds, constants.MaxGraceSeconds) {
 			errors = append(errors, validation(codeValueOutOfRange, path+".grace_seconds"))
 		}
-		key := strconvItoa(priority) + ":app:" + action.BundleID
-		verb := action.Type
-		if previous := conflicts[key]; previous != "" && previous != verb {
-			errors = append(errors, validation(codeRuleConflictSamePriority, path))
+		if len(idErrors) == 0 {
+			action.BundleIDs = ids
+			for _, id := range ids {
+				recordAppConflict(conflicts, priority, action.Type, id, path, &errors)
+			}
 		}
-		conflicts[key] = verb
 	case "process.start":
 		if action.ProcessID == "" {
 			errors = append(errors, validation(codeMissingRequiredField, path+".process_id"))
@@ -212,6 +220,54 @@ func validateAction(action *Action, path, group string, allowShell bool, process
 		errors = append(errors, validation(codeUnknownActionType, path+".type"))
 	}
 	return errors
+}
+
+func recordAppConflict(conflicts map[string]string, priority int, verb, bundleID, path string, errors *[]ValidationError) {
+	key := strconvItoa(priority) + ":app:" + bundleID
+	if previous := conflicts[key]; previous != "" && previous != verb {
+		*errors = append(*errors, validation(codeRuleConflictSamePriority, path))
+	}
+	conflicts[key] = verb
+}
+
+func validateAppStopIDs(action *Action, path string) ([]string, []ValidationError) {
+	raw := make([]string, 0, 1+len(action.BundleIDs))
+	if action.BundleID != "" {
+		raw = append(raw, action.BundleID)
+	}
+	raw = append(raw, action.BundleIDs...)
+	if len(raw) == 0 {
+		field := path + ".bundle_id"
+		if action.BundleIDs != nil {
+			field = path + ".bundle_ids"
+		}
+		return nil, []ValidationError{validation(codeMissingRequiredField, field)}
+	}
+	if len(raw) > constants.MaxActionsPerRule {
+		return nil, []ValidationError{validation(codeValueOutOfRange, path+".bundle_ids")}
+	}
+	seen := map[string]struct{}{}
+	ids := make([]string, 0, len(raw))
+	var errors []ValidationError
+	if action.BundleID != "" && !reBundleID.MatchString(action.BundleID) {
+		errors = append(errors, validation(codeInvalidIdentifier, path+".bundle_id"))
+	}
+	for i, id := range action.BundleIDs {
+		if !reBundleID.MatchString(id) {
+			errors = append(errors, validation(codeInvalidIdentifier, path+".bundle_ids["+strconvItoa(i)+"]"))
+		}
+	}
+	if len(errors) > 0 {
+		return nil, errors
+	}
+	for _, id := range raw {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
 
 func validateBrowserDomains(domains []string, path string) ([]string, []ValidationError) {
