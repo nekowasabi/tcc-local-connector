@@ -165,3 +165,10 @@ rules:
 削除時は Firefox の一時拡張を削除し、登録時と同じアプリを移動・削除する前に `bash scripts/uninstall-firefox-native-host.sh --app /path/to/TCCLocalConnector.app` を実行して、`browser.block` を `config.yml` から除去します。安全上、登録済みアプリが存在せず Host の絶対パスを照合できない状態では削除スクリプトは失敗します。ロールバック時は拡張を無効化して Host マニフェストを削除し、旧アプリを配置する場合は `bash scripts/install-firefox-native-host.sh --app /path/to/TCCLocalConnector.app` で旧 Host を再登録します。
 
 この一時導入に Mozilla の署名は不要です。署名済み拡張の作成・配布、更新チャネルの運用は本リポジトリの対象外です。
+# 既定のタスク開始アクション
+
+`default.on_task_start` に設定したアクションは、取得成功時に新規開始タスクの差分だけを対象として、通常ルールより先に計画されます。欠損・重複した `task_id` や取得失敗では比較状態を更新しません。
+
+`safety.dry_run: true` を維持したまま、公開計画とログに実行情報が露出しないことを確認してください。既存のバックエンドアクションを有効化する場合は、設定を棚卸ししてから段階的に切り替えます。
+
+欠損・重複IDを検出したサイクルでは既定アクションを発火しませんが、通常ルールの評価は継続します。フロントエンドアクションは計画順にdispatchされ、同一サイクルの各公開計画が持つ停止対象はdefaultとrulesの和集合です。

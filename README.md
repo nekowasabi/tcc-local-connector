@@ -121,3 +121,10 @@ rules:
 拡張の権限は `nativeMessaging`、`webRequest`、`webRequestBlocking`、`<all_urls>` です。Host マニフェストは利用者専用のディレクトリ権限 `0700`、ファイル権限 `0600` で登録されます。`safety.dry_run: true` では遮断せず、予定集合の変更を通知だけで確認できます。設定欠損・破損、pause、取得失敗の猶予超過、制御解放、Host の未接続・切断、ポリシーまたは所有者心拍の期限切れでは fail-open とし、最悪 16.000 秒以下で許可へ復帰します。通常ウィンドウだけが対象で、プライベートウィンドウには `incognito=not_allowed` により作用しません。
 
 削除は一時拡張を Firefox から削除して `bash scripts/uninstall-firefox-native-host.sh` を実行します。ロールバックは拡張を無効化し、Host マニフェストを削除し、`browser.block` を設定から除去します。旧版へ戻す場合は旧アプリを配置して Host マニフェストを再登録します。一時導入には Mozilla の署名は不要ですが、署名済み拡張の作成・配布は本リポジトリの対象外です。最後に `bash scripts/verify-firefox-extension.sh` を実行し、既存の NDJSON、アプリ制御、通知、`process.*`、`command.run` に回帰がないことを確認します。
+# default.on_task_start
+
+`default.on_task_start` は、タスク取得で新規開始を検知したときに、通常ルールより先に一度だけ計画されます。初回取得は空集合との差分として扱います。設定しない場合は空です。
+
+実行安全性のため `safety.dry_run: true` が既定です。バックエンドアクションを有効化する前に、設定ファイルの棚卸しと dry-run の結果確認を行ってください。既定フェーズでは `browser.block` は使用できません。
+
+欠損・重複した `task_id` では開始比較状態を更新せず、既定アクションだけを抑制します。通常ルールの評価と公開計画は継続します。フロントエンドアクションはdefault→rulesの計画順にdispatchされ、各公開計画はdefaultとrulesを結合した同じ停止対象集合を保持します。
