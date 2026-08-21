@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -54,6 +55,8 @@ type Engine struct {
 	pausePath  string
 	ledger     *ledger.Manager
 	previous   rules.Evaluation
+	taskIDs    map[string]struct{}
+	taskIDsSet bool
 	emit       func(string, any)
 	logger     *logging.Logger
 	lastTick   time.Time
@@ -84,7 +87,7 @@ func New(deps Deps) *Engine {
 		logger = logging.New(nil, constants.DefaultLogLevel)
 	}
 	logger.Rotate(stateDir, constants.DefaultLogRetainDays, time.Now())
-	engine := &Engine{configPath: path, machine: state.NewMachine(), status: Status{State: state.StateStarting, RunningTasks: []TaskView{}}, pausePath: filepath.Join(stateDir, constants.PauseFileName), emit: deps.Emit, logger: logger}
+	engine := &Engine{configPath: path, machine: state.NewMachine(), status: Status{State: state.StateStarting, RunningTasks: []TaskView{}}, pausePath: filepath.Join(stateDir, constants.PauseFileName), emit: deps.Emit, logger: logger, taskIDs: map[string]struct{}{}}
 	engine.policyPath = deps.BrowserPolicyPath
 	if engine.policyPath == "" {
 		engine.policyPath = defaultBrowserPolicyPath(path)
@@ -250,7 +253,7 @@ func (e *Engine) RunCycleNow(ctx context.Context) (int64, error) {
 	defer func() { e.mu.Lock(); e.running = false; e.mu.Unlock() }()
 	fetchCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.Polling.TimeoutSeconds)*time.Second)
 	defer cancel()
-	e.logger.Log(logging.Entry{Level: "info", Component: "engine", Event: "fetch_taskchute", Message: cfg.TaskSource.Executable})
+	e.logger.Log(logging.Entry{Level: "info", Component: "engine", Event: "fetch_taskchute"})
 	result, err := tcc2.FetchTaskChute(fetchCtx, cfg.TaskSource.Executable, cfg.TaskSource.Args, cfg.TaskSource.ViewID)
 	e.mu.Lock()
 	if err != nil {
@@ -271,31 +274,37 @@ func (e *Engine) RunCycleNow(ctx context.Context) (int64, error) {
 		}
 		return id, err
 	}
+	taskIDs, started, snapshotErr := observeTaskSnapshot(result.RunningTasks, e.taskIDs, e.taskIDsSet)
+	if snapshotErr != nil {
+		e.logger.Log(logging.Entry{Level: "warn", Component: "engine", Event: "invalid_task_id_observation", Reason: snapshotErr.reason})
+	}
 	tasks := make([]TaskView, len(result.RunningTasks))
 	for i, task := range result.RunningTasks {
 		tasks[i] = TaskView{Name: task.Name, TaskID: task.TaskID, Date: task.Date}
 	}
 	e.status.RunningTasks = tasks
-	e.status.ParseOK = true
-	e.status.LastError = ""
+	e.status.ParseOK = snapshotErr == nil
+	if snapshotErr == nil {
+		e.status.LastError = ""
+	} else {
+		e.status.LastError = snapshotErr.Error()
+	}
 	e.machine.Transition("success", time.Now(), 0)
 	e.status.State = e.machine.Current()
 	previous := e.previous
 	current := rules.Evaluate(cfg, result.RunningTasks)
-	plan, _ := rules.BuildPlan(id, previous, current)
+	var defaultActions []config.Action
+	if snapshotErr == nil && len(started) > 0 {
+		defaultActions = cfg.Default.OnTaskStart
+	}
+	plan, _ := rules.BuildPlanWithDefault(id, defaultActions, previous, current)
 	plan.DryRun = cfg.Safety.DryRun
 	e.previous = current
-	plannedDomains := rules.BuildBrowserPolicy(current)
-	frontend := make([]rules.PlannedAction, 0, len(plan.Actions))
-	backend := make([]rules.PlannedAction, 0, len(plan.Actions))
-	for _, action := range plan.Actions {
-		if action.Kind == "process.start" || action.Kind == "process.stop" || action.Kind == "command.run" {
-			backend = append(backend, action)
-		} else {
-			frontend = append(frontend, action)
-		}
+	if snapshotErr == nil {
+		e.taskIDs = taskIDs
+		e.taskIDsSet = true
 	}
-	plan.Actions = frontend
+	plannedDomains := rules.BuildBrowserPolicy(current)
 	status := e.status
 	e.mu.Unlock()
 	if cfg.Safety.DryRun {
@@ -307,11 +316,26 @@ func (e *Engine) RunCycleNow(ctx context.Context) (int64, error) {
 	} else if err := e.publishBrowserPolicy(true, false, plannedDomains, plannedDomains); err != nil {
 		e.logger.Log(logging.Entry{Level: "error", Component: "engine", Event: "browser_policy_publish_failed", Message: err.Error()})
 	}
-	e.executeBackendActions(ctx, backend, cfg.Safety.DryRun, cfg.Safety.AllowShell)
 	e.emitEvent("state_changed", status)
-	e.emitEvent("plan", plan)
-	if cfg.Safety.DryRun && len(backend)+len(frontend) > 0 {
-		message := fmt.Sprintf("dry_run: %d件のアクションを実行せずスキップしました", len(backend)+len(frontend))
+	frontendDispatched := false
+	for _, action := range plan.Actions {
+		if action.Kind == "process.start" || action.Kind == "process.stop" || action.Kind == "command.run" {
+			e.executeBackendActionsForCycle(ctx, id, []rules.PlannedAction{action}, cfg.Safety.DryRun, cfg.Safety.AllowShell)
+			continue
+		}
+		frontendPlan := plan
+		frontendPlan.Actions = []rules.PlannedAction{action}
+		e.emitEvent("plan", publicPlan(frontendPlan))
+		frontendDispatched = true
+	}
+	if !frontendDispatched {
+		emptyPlan := plan
+		emptyPlan.Actions = []rules.PlannedAction{}
+		e.emitEvent("plan", publicPlan(emptyPlan))
+	}
+	actionCount := len(plan.Actions)
+	if cfg.Safety.DryRun && actionCount > 0 {
+		message := fmt.Sprintf("dry_run: %d件のアクションを実行せずスキップしました", actionCount)
 		e.logger.Log(logging.Entry{Level: "info", Component: "engine", Event: "dry_run_skipped", Message: message})
 		e.emitEvent("notify", map[string]any{
 			"level":   "info",
@@ -323,77 +347,160 @@ func (e *Engine) RunCycleNow(ctx context.Context) (int64, error) {
 	}
 	return id, nil
 }
-func (e *Engine) executeBackendActions(ctx context.Context, actions []rules.PlannedAction, dryRun, allowShell bool) []ActionResult {
-	results := make([]ActionResult, 0, len(actions))
-	for _, action := range actions {
-		// Why: Skip before dispatching instead of relying on each action implementation.
-		// A new action kind must inherit dry-run safety by default.
-		if dryRun {
-			results = append(results, ActionResult{ActionID: action.ActionID, Status: "skipped"})
-			continue
+
+var taskIDPattern = regexp.MustCompile(constants.TaskIDPattern)
+
+type taskSnapshotError struct {
+	reason string
+}
+
+func (e *taskSnapshotError) Error() string {
+	return "invalid_task_id_observation: " + e.reason
+}
+
+func observeTaskSnapshot(tasks []tcc2.RunningTask, previous map[string]struct{}, initialized bool) (map[string]struct{}, map[string]struct{}, *taskSnapshotError) {
+	current := make(map[string]struct{}, len(tasks))
+	for _, task := range tasks {
+		if !taskIDPattern.MatchString(task.TaskID) {
+			return nil, nil, &taskSnapshotError{reason: "missing"}
 		}
-		switch action.Kind {
-		case "process.start":
-			if e.ledger == nil {
-				results = append(results, ActionResult{ActionID: action.ActionID, Status: "failed", Code: "permission_denied"})
-				continue
-			}
-			env := make([]string, 0, len(action.Env))
-			for key, value := range action.Env {
-				env = append(env, key+"="+value)
-			}
-			sort.Strings(env)
-			status, err := e.ledger.Start(ctx, ledger.StartSpec{ProcessID: action.ProcessID, Executable: action.Executable, Args: action.Args, WorkingDir: action.WorkingDir, Env: env}, false)
-			results = append(results, actionResult(action.ActionID, status, err))
-		case "process.stop":
-			if e.ledger == nil {
-				results = append(results, ActionResult{ActionID: action.ActionID, Status: "failed", Code: "permission_denied"})
-				continue
-			}
-			if _, ok := e.ledger.Ledger.Get(action.ProcessID); !ok {
-				// Why: Keep the ledger boundary even if a future caller bypasses config validation.
-				// Allowing a name-only stop here could target an unrelated process.
-				results = append(results, ActionResult{ActionID: action.ActionID, Status: "failed", Code: "permission_denied"})
-				continue
-			}
-			grace := action.GraceSeconds
-			if grace == 0 {
-				grace = constants.DefaultProcessStopGraceSeconds
-			}
-			result, err := e.ledger.Stop(ctx, action.ProcessID, time.Duration(grace)*time.Second, false)
-			results = append(results, actionResult(action.ActionID, result.Status, err))
-		case "command.run":
-			if action.Shell && !allowShell {
-				results = append(results, ActionResult{ActionID: action.ActionID, Status: "failed", Code: "permission_denied"})
-				e.emitEvent("notify", map[string]any{"level": "error", "code": "action_refused", "title": "コマンドを拒否しました", "message": "shell 実行は許可されていません", "at": time.Now().UTC()})
-				continue
-			}
-			commandCtx := ctx
-			var cancel context.CancelFunc
-			if action.TimeoutSeconds > 0 {
-				commandCtx, cancel = context.WithTimeout(ctx, time.Duration(action.TimeoutSeconds)*time.Second)
-			}
-			command, commandErr := commandRunSpec(commandCtx, action)
-			output, err := runCommand(commandCtx, command)
-			if commandErr != nil {
-				err = commandErr
-			}
-			if err != nil {
-				code := "action_refused"
-				if errors.Is(err, context.DeadlineExceeded) || errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
-					code = "timeout"
-				}
-				e.emitEvent("notify", map[string]any{"level": "error", "code": code, "title": "コマンド実行に失敗しました", "message": "設定されたコマンドを実行できませんでした", "at": time.Now().UTC()})
-				results = append(results, ActionResult{ActionID: action.ActionID, Status: "failed", Code: code, Detail: output})
-			} else {
-				results = append(results, ActionResult{ActionID: action.ActionID, Status: "accepted", Detail: output})
-			}
-			if cancel != nil {
-				cancel()
-			}
+		if _, exists := current[task.TaskID]; exists {
+			return nil, nil, &taskSnapshotError{reason: "duplicate"}
+		}
+		current[task.TaskID] = struct{}{}
+	}
+	started := map[string]struct{}{}
+	if !initialized {
+		for taskID := range current {
+			started[taskID] = struct{}{}
+		}
+		return current, started, nil
+	}
+	for taskID := range current {
+		if _, exists := previous[taskID]; !exists {
+			started[taskID] = struct{}{}
 		}
 	}
+	return current, started, nil
+}
+
+func publicPlan(plan rules.Plan) rules.Plan {
+	actions := make([]rules.PlannedAction, 0, len(plan.Actions))
+	for _, action := range plan.Actions {
+		if action.Kind != "app.start" && action.Kind != "app.stop" && action.Kind != "notify" {
+			continue
+		}
+		actions = append(actions, rules.PlannedAction{
+			ActionID:     action.ActionID,
+			Phase:        action.Phase,
+			Kind:         action.Kind,
+			BundleID:     action.BundleID,
+			GraceSeconds: action.GraceSeconds,
+			Title:        action.Title,
+			Message:      action.Message,
+			Reason:       action.Reason,
+			Priority:     action.Priority,
+		})
+	}
+	plan.Actions = actions
+	return plan
+}
+
+func (e *Engine) executeBackendActions(ctx context.Context, actions []rules.PlannedAction, dryRun, allowShell bool) []ActionResult {
+	return e.executeBackendActionsForCycle(ctx, 0, actions, dryRun, allowShell)
+}
+
+func (e *Engine) executeBackendActionsForCycle(ctx context.Context, cycleID int64, actions []rules.PlannedAction, dryRun, allowShell bool) []ActionResult {
+	results := make([]ActionResult, 0, len(actions))
+	for _, action := range actions {
+		startedAt := time.Now()
+		result := e.executeBackendAction(ctx, action, dryRun, allowShell)
+		results = append(results, result)
+		durationMS := time.Since(startedAt).Milliseconds()
+		if durationMS == 0 {
+			durationMS = 1
+		}
+		level := "info"
+		if result.Status == "failed" {
+			level = "warn"
+		}
+		e.logger.Log(logging.Entry{
+			Level:      level,
+			Component:  "engine",
+			Event:      "backend_action_result",
+			CycleID:    cycleID,
+			ActionID:   action.ActionID,
+			Phase:      action.Phase,
+			Status:     result.Status,
+			ActionType: action.Kind,
+			DurationMS: durationMS,
+			ErrorCode:  result.Code,
+		})
+	}
 	return results
+}
+
+func (e *Engine) executeBackendAction(ctx context.Context, action rules.PlannedAction, dryRun, allowShell bool) ActionResult {
+	// Why: Skip before dispatching instead of relying on each action implementation.
+	// A new action kind must inherit dry-run safety by default.
+	if dryRun {
+		return ActionResult{ActionID: action.ActionID, Status: "skipped"}
+	}
+	switch action.Kind {
+	case "process.start":
+		if e.ledger == nil {
+			return ActionResult{ActionID: action.ActionID, Status: "failed", Code: "permission_denied"}
+		}
+		env := make([]string, 0, len(action.Env))
+		for key, value := range action.Env {
+			env = append(env, key+"="+value)
+		}
+		sort.Strings(env)
+		status, err := e.ledger.Start(ctx, ledger.StartSpec{ProcessID: action.ProcessID, Executable: action.Executable, Args: action.Args, WorkingDir: action.WorkingDir, Env: env}, false)
+		return actionResult(action.ActionID, status, err)
+	case "process.stop":
+		if e.ledger == nil {
+			return ActionResult{ActionID: action.ActionID, Status: "failed", Code: "permission_denied"}
+		}
+		if _, ok := e.ledger.Ledger.Get(action.ProcessID); !ok {
+			// Why: Keep the ledger boundary even if a future caller bypasses config validation.
+			// Allowing a name-only stop here could target an unrelated process.
+			return ActionResult{ActionID: action.ActionID, Status: "failed", Code: "permission_denied"}
+		}
+		grace := action.GraceSeconds
+		if grace == 0 {
+			grace = constants.DefaultProcessStopGraceSeconds
+		}
+		result, err := e.ledger.Stop(ctx, action.ProcessID, time.Duration(grace)*time.Second, false)
+		return actionResult(action.ActionID, result.Status, err)
+	case "command.run":
+		if action.Shell && !allowShell {
+			e.emitEvent("notify", map[string]any{"level": "error", "code": "action_refused", "title": "コマンドを拒否しました", "message": "shell 実行は許可されていません", "at": time.Now().UTC()})
+			return ActionResult{ActionID: action.ActionID, Status: "failed", Code: "permission_denied"}
+		}
+		commandCtx := ctx
+		var cancel context.CancelFunc
+		if action.TimeoutSeconds > 0 {
+			commandCtx, cancel = context.WithTimeout(ctx, time.Duration(action.TimeoutSeconds)*time.Second)
+			defer cancel()
+		}
+		command, commandErr := commandRunSpec(commandCtx, action)
+		if commandErr != nil {
+			return ActionResult{ActionID: action.ActionID, Status: "failed", Code: "action_refused"}
+		}
+		output, err := runCommand(commandCtx, command)
+		if err != nil {
+			code := "action_refused"
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
+				code = "timeout"
+			}
+			e.emitEvent("notify", map[string]any{"level": "error", "code": code, "title": "コマンド実行に失敗しました", "message": "設定されたコマンドを実行できませんでした", "at": time.Now().UTC()})
+			return ActionResult{ActionID: action.ActionID, Status: "failed", Code: code, Detail: output}
+		}
+		return ActionResult{ActionID: action.ActionID, Status: "accepted", Detail: output}
+	default:
+		return ActionResult{ActionID: action.ActionID, Status: "failed", Code: "action_refused"}
+	}
 }
 
 func actionResult(actionID, status string, err error) ActionResult {

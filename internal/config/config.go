@@ -18,6 +18,7 @@ type Config struct {
 	TaskSource TaskSource `yaml:"task_source" json:"task_source"`
 	Safety     Safety     `yaml:"safety" json:"safety"`
 	Logging    Logging    `yaml:"logging" json:"logging"`
+	Default    Default    `yaml:"default" json:"default"`
 	Rules      []Rule     `yaml:"rules" json:"rules"`
 }
 type Polling struct {
@@ -50,6 +51,9 @@ type Rule struct {
 	OnEnter  []Action `yaml:"on_enter" json:"on_enter"`
 	OnExit   []Action `yaml:"on_exit" json:"on_exit"`
 }
+type Default struct {
+	OnTaskStart []Action `yaml:"on_task_start" json:"on_task_start"`
+}
 type Match struct {
 	TaskNameContains    []string `yaml:"task_name_contains" json:"task_name_contains"`
 	TaskNameNotContains []string `yaml:"task_name_not_contains" json:"task_name_not_contains"`
@@ -73,7 +77,7 @@ type Action struct {
 }
 
 func defaults() Config {
-	return Config{Version: constants.ConfigSchemaVersion, Polling: Polling{IntervalSeconds: constants.DefaultPollIntervalSeconds, TimeoutSeconds: constants.DefaultPollTimeoutSeconds, FailureGraceSeconds: constants.DefaultFailureGraceSeconds, FailurePolicy: "release_controls"}, TaskSource: TaskSource{Type: "tcc2_mcp", Args: []string{"mcp"}}, Safety: Safety{DryRun: true}, Logging: Logging{Level: constants.DefaultLogLevel, RetainDays: constants.DefaultLogRetainDays}, Rules: []Rule{}}
+	return Config{Version: constants.ConfigSchemaVersion, Polling: Polling{IntervalSeconds: constants.DefaultPollIntervalSeconds, TimeoutSeconds: constants.DefaultPollTimeoutSeconds, FailureGraceSeconds: constants.DefaultFailureGraceSeconds, FailurePolicy: "release_controls"}, TaskSource: TaskSource{Type: "tcc2_mcp", Args: []string{"mcp"}}, Safety: Safety{DryRun: true}, Logging: Logging{Level: constants.DefaultLogLevel, RetainDays: constants.DefaultLogRetainDays}, Default: Default{OnTaskStart: []Action{}}, Rules: []Rule{}}
 }
 
 func Load(path string) (*Config, []ValidationError, error) {

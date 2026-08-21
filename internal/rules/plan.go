@@ -16,6 +16,7 @@ type Plan struct {
 }
 type PlannedAction struct {
 	ActionID       string            `json:"action_id"`
+	Phase          string            `json:"phase"`
 	Kind           string            `json:"kind"`
 	BundleID       string            `json:"bundle_id,omitempty"`
 	ProcessID      string            `json:"process_id,omitempty"`
@@ -37,21 +38,31 @@ type Conflict struct {
 }
 
 func BuildPlan(cycleID int64, previous, current Evaluation) (Plan, []Conflict) {
-	candidates := []PlannedAction{}
+	return buildPlan(cycleID, nil, previous, current)
+}
+
+func BuildPlanWithDefault(cycleID int64, defaultActions []config.Action, previous, current Evaluation) (Plan, []Conflict) {
+	return buildPlan(cycleID, defaultActions, previous, current)
+}
+
+func buildPlan(cycleID int64, defaultActions []config.Action, previous, current Evaluation) (Plan, []Conflict) {
+	selected := actions(defaultActions, "default.on_task_start", 0, "default")
+	ruleCandidates := []PlannedAction{}
 	for _, id := range sortedRuleIDs(current.ActiveRuleIDs) {
 		rule := current.Rules[id]
-		candidates = append(candidates, actions(rule.Ensure, "ensure", rule.Priority)...)
+		ruleCandidates = append(ruleCandidates, actions(rule.Ensure, "ensure", rule.Priority, "rules")...)
 		if !previous.ActiveRuleIDs[id] {
-			candidates = append(candidates, actions(rule.OnEnter, "on_enter", rule.Priority)...)
+			ruleCandidates = append(ruleCandidates, actions(rule.OnEnter, "on_enter", rule.Priority, "rules")...)
 		}
 	}
 	for _, id := range sortedRuleIDs(previous.ActiveRuleIDs) {
 		if !current.ActiveRuleIDs[id] {
 			rule := previous.Rules[id]
-			candidates = append(candidates, actions(rule.OnExit, "on_exit", rule.Priority)...)
+			ruleCandidates = append(ruleCandidates, actions(rule.OnExit, "on_exit", rule.Priority, "rules")...)
 		}
 	}
-	selected, conflicts := dedupe(candidates)
+	rules, conflicts := dedupe(ruleCandidates)
+	selected = append(selected, rules...)
 	for index := range selected {
 		selected[index].ActionID = fmt.Sprintf("%d-%d", cycleID, index+1)
 	}
@@ -72,19 +83,19 @@ func BuildPlan(cycleID int64, previous, current Evaluation) (Plan, []Conflict) {
 	sort.Strings(stops)
 	return Plan{CycleID: cycleID, Actions: selected, EnforceStopBundleIDs: stops}, conflicts
 }
-func actions(values []config.Action, reason string, priority int) []PlannedAction {
+func actions(values []config.Action, reason string, priority int, phase string) []PlannedAction {
 	output := []PlannedAction{}
 	for _, value := range values {
 		if value.Type == "app.stop" {
 			for _, id := range appStopBundleIDs(value) {
-				output = append(output, PlannedAction{Kind: "app.stop", BundleID: id, GraceSeconds: value.GraceSeconds, Reason: reason, Priority: priority})
+				output = append(output, PlannedAction{Phase: phase, Kind: "app.stop", BundleID: id, GraceSeconds: value.GraceSeconds, Reason: reason, Priority: priority})
 			}
 			continue
 		}
-		if value.Type != "app.start" && value.Type != "notify" {
+		if value.Type != "app.start" && value.Type != "process.start" && value.Type != "process.stop" && value.Type != "command.run" && value.Type != "notify" {
 			continue
 		}
-		output = append(output, PlannedAction{Kind: value.Type, BundleID: value.BundleID, ProcessID: value.ProcessID, Executable: value.Executable, Args: value.Args, WorkingDir: value.WorkingDir, Env: value.Env, GraceSeconds: value.GraceSeconds, TimeoutSeconds: value.TimeoutSeconds, Shell: value.Shell, Title: value.Title, Message: value.Message, Reason: reason, Priority: priority})
+		output = append(output, PlannedAction{Phase: phase, Kind: value.Type, BundleID: value.BundleID, ProcessID: value.ProcessID, Executable: value.Executable, Args: value.Args, WorkingDir: value.WorkingDir, Env: value.Env, GraceSeconds: value.GraceSeconds, TimeoutSeconds: value.TimeoutSeconds, Shell: value.Shell, Title: value.Title, Message: value.Message, Reason: reason, Priority: priority})
 	}
 	return output
 }

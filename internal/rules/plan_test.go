@@ -231,23 +231,81 @@ func TestBuildPlan_NoUnsupportedActions(t *testing.T) {
 		Rules: map[string]config.Rule{
 			"r": {ID: "r", Priority: 10, Ensure: []config.Action{
 				{Type: "app.start", BundleID: "com.example.app"},
-				{Type: "process.start", ProcessID: "worker", Executable: "/bin/echo"},
+				{Type: "app.stop", BundleID: "com.example.stop"},
+				{Type: "process.start", ProcessID: "worker-start", Executable: "/bin/echo"},
 				{Type: "command.run", Executable: "/bin/echo"},
-				{Type: "process.stop", ProcessID: "worker"},
+				{Type: "process.stop", ProcessID: "worker-stop"},
 				{Type: "notify", Title: "hello", Message: "world"},
 			}},
 		},
 	}
 	plan, _ := BuildPlan(1, Evaluation{}, current)
-	if len(plan.Actions) != 2 {
+	if len(plan.Actions) != 6 {
 		t.Fatalf("unexpected actions=%#v", plan.Actions)
 	}
 	seen := map[string]bool{}
 	for _, action := range plan.Actions {
 		seen[action.Kind] = true
 	}
-	if seen["app.start"] != true || seen["notify"] != true || seen["process.start"] || seen["command.run"] || seen["process.stop"] {
-		t.Fatalf("plan contains unsupported kinds=%#v", plan.Actions)
+	for _, kind := range []string{"app.start", "app.stop", "process.start", "process.stop", "command.run", "notify"} {
+		if !seen[kind] {
+			t.Fatalf("plan is missing supported kind %q: %#v", kind, plan.Actions)
+		}
+	}
+	for _, action := range plan.Actions {
+		if action.Phase != "rules" {
+			t.Fatalf("phase=%q action=%#v", action.Phase, action)
+		}
+	}
+}
+
+func TestBuildPlanWithDefault_SequencesPhasesWithoutCrossPhaseDedupe(t *testing.T) {
+	defaultActions := []config.Action{
+		{Type: "notify", Title: "first", Message: "default"},
+		{Type: "process.start", ProcessID: "worker", Executable: "/bin/echo"},
+	}
+	current := Evaluation{
+		ActiveRuleIDs: map[string]bool{"r": true},
+		Rules: map[string]config.Rule{"r": {ID: "r", Priority: 10, Ensure: []config.Action{
+			{Type: "process.start", ProcessID: "worker", Executable: "/bin/echo"},
+			{Type: "notify", Title: "second", Message: "rules"},
+		}}},
+	}
+
+	plan, conflicts := BuildPlanWithDefault(9, defaultActions, Evaluation{}, current)
+	if len(conflicts) != 0 || len(plan.Actions) != 4 {
+		t.Fatalf("plan=%#v conflicts=%#v", plan, conflicts)
+	}
+	wantIDs := []string{"9-1", "9-2", "9-3", "9-4"}
+	for i, action := range plan.Actions {
+		if action.ActionID != wantIDs[i] {
+			t.Fatalf("action[%d] id=%q want=%q", i, action.ActionID, wantIDs[i])
+		}
+	}
+	if plan.Actions[0].Phase != "default" || plan.Actions[1].Phase != "default" || plan.Actions[2].Phase != "rules" || plan.Actions[3].Phase != "rules" {
+		t.Fatalf("phases=%#v", plan.Actions)
+	}
+	if plan.Actions[0].Reason != "default.on_task_start" || plan.Actions[1].Reason != "default.on_task_start" {
+		t.Fatalf("default reasons=%#v", plan.Actions[:2])
+	}
+	processPhases := map[string]bool{}
+	for _, action := range plan.Actions {
+		if action.ProcessID == "worker" {
+			processPhases[action.Phase] = true
+		}
+	}
+	if !processPhases["default"] || !processPhases["rules"] {
+		t.Fatalf("cross-phase action was not retained: %#v", plan.Actions)
+	}
+}
+
+func TestBuildPlanWithDefault_SkipsBrowserBlock(t *testing.T) {
+	plan, _ := BuildPlanWithDefault(1, []config.Action{
+		{Type: "browser.block", Domains: []string{"example.com"}},
+		{Type: "notify", Title: "hello", Message: "world"},
+	}, Evaluation{}, Evaluation{})
+	if len(plan.Actions) != 1 || plan.Actions[0].Kind != "notify" || plan.Actions[0].Phase != "default" {
+		t.Fatalf("actions=%#v", plan.Actions)
 	}
 }
 

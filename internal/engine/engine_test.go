@@ -1,7 +1,9 @@
 package engine
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -16,8 +18,10 @@ import (
 	"github.com/takets/tcc-local-connector/internal/config"
 	"github.com/takets/tcc-local-connector/internal/constants"
 	"github.com/takets/tcc-local-connector/internal/ledger"
+	"github.com/takets/tcc-local-connector/internal/logging"
 	"github.com/takets/tcc-local-connector/internal/rules"
 	"github.com/takets/tcc-local-connector/internal/state"
+	"github.com/takets/tcc-local-connector/internal/tcc2"
 )
 
 func TestMain(m *testing.M) {
@@ -748,6 +752,386 @@ func TestDryRunCommandRunDoesNotExecute(t *testing.T) {
 	}
 }
 
+func TestPlanProjectionOmitsSecrets(t *testing.T) {
+	plan := publicPlan(rules.Plan{Actions: []rules.PlannedAction{
+		{
+			ActionID: "1-1", Phase: "default", Kind: "command.run",
+			Executable: "/secret/executable", Args: []string{"secret-arg"},
+			WorkingDir: "/secret/workdir", Env: map[string]string{"TOKEN": "secret-env"},
+		},
+		{
+			ActionID: "1-2", Phase: "default", Kind: "notify",
+			Title: "Task started", Message: "Public notification",
+		},
+	}})
+	if len(plan.Actions) != 1 || plan.Actions[0].Kind != "notify" || plan.Actions[0].Title != "Task started" || plan.Actions[0].Message != "Public notification" {
+		t.Fatalf("public plan = %#v", plan)
+	}
+	payload, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"secret-executable", "secret-arg", "secret-workdir", "secret-env"} {
+		if strings.Contains(string(payload), secret) {
+			t.Fatalf("public plan leaked %q: %s", secret, payload)
+		}
+	}
+}
+
+func TestBackendActionsReachExecutor(t *testing.T) {
+	value, err := ledger.Load(filepath.Join(t.TempDir(), "managed-processes.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logOutput bytes.Buffer
+	engine := New(Deps{Logger: logging.New(&logOutput, "info")})
+	engine.ledger = ledger.NewManager(value)
+	results := engine.executeBackendActionsForCycle(context.Background(), 1, []rules.PlannedAction{
+		{ActionID: "1-1", Phase: "default", Kind: "process.start", ProcessID: "worker", Executable: "/bin/sleep", Args: []string{"1000"}},
+		{ActionID: "1-2", Phase: "default", Kind: "process.stop", ProcessID: "worker"},
+		{ActionID: "1-3", Phase: "rules", Kind: "command.run", Executable: "/usr/bin/true"},
+	}, false, false)
+	if len(results) != 3 {
+		t.Fatalf("results = %#v", results)
+	}
+	for _, result := range results {
+		if result.Status != "accepted" {
+			t.Fatalf("results = %#v", results)
+		}
+	}
+	lines := bytes.Split(bytes.TrimSpace(logOutput.Bytes()), []byte("\n"))
+	if len(lines) != 3 {
+		t.Fatalf("backend log lines = %d: %s", len(lines), logOutput.String())
+	}
+	for index, line := range lines {
+		var entry logging.Entry
+		if err := json.Unmarshal(line, &entry); err != nil {
+			t.Fatal(err)
+		}
+		if entry.CycleID != 1 || entry.ActionID == "" || entry.Phase == "" || entry.ActionType == "" || entry.Status != "accepted" || entry.DurationMS <= 0 {
+			t.Fatalf("backend log[%d] = %#v", index, entry)
+		}
+		if bytes.Contains(line, []byte(`"detail"`)) || bytes.Contains(line, []byte(`"process_id"`)) || bytes.Contains(line, []byte(`"executable"`)) || bytes.Contains(line, []byte(`"args"`)) {
+			t.Fatalf("backend log leaked action detail: %s", line)
+		}
+	}
+}
+
+func TestDryRunSkipsSideEffects(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran")
+	script := filepath.Join(t.TempDir(), "write-marker.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf ran > '"+marker+"'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	engine := New(Deps{})
+	results := engine.executeBackendActions(context.Background(), []rules.PlannedAction{{
+		ActionID: "1-1", Kind: "command.run", Executable: script,
+	}}, true, false)
+	if len(results) != 1 || results[0].Status != "skipped" {
+		t.Fatalf("results = %#v", results)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("dry-run side effect exists: %v", err)
+	}
+}
+
+func TestTaskSnapshotDeltaInitialAndInvalidPreserve(t *testing.T) {
+	first := "task_0123456789abcdef0123456789abcdef"
+	current, started, err := observeTaskSnapshot([]tcc2.RunningTask{{TaskID: first}}, nil, false)
+	if err != nil || len(current) != 1 || len(started) != 1 {
+		t.Fatalf("initial snapshot = current:%v started:%v err:%v", current, started, err)
+	}
+	if _, _, err := observeTaskSnapshot([]tcc2.RunningTask{{TaskID: ""}}, current, true); err == nil {
+		t.Fatal("missing task ID was accepted")
+	} else if err.reason != "missing" {
+		t.Fatalf("missing reason = %q", err.reason)
+	}
+	if _, _, err := observeTaskSnapshot([]tcc2.RunningTask{{TaskID: first}, {TaskID: first}}, current, true); err == nil {
+		t.Fatal("duplicate task ID was accepted")
+	} else if err.reason != "duplicate" {
+		t.Fatalf("duplicate reason = %q", err.reason)
+	}
+	if len(current) != 1 {
+		t.Fatalf("previous snapshot changed: %v", current)
+	}
+}
+
+func TestPlanDispatchPreservesOrderAndStopUnion(t *testing.T) {
+	fake := createActiveFakeMCPScript(t)
+	marker := filepath.Join(t.TempDir(), "default-backend-ran")
+	defaultCommand := writeMarkerScript(t, marker)
+	var plans []rules.Plan
+	engine := New(Deps{
+		BrowserPolicyStore: &memoryPolicyStore{},
+		Emit: func(event string, value any) {
+			if event == "plan" {
+				plan := value.(rules.Plan)
+				plans = append(plans, plan)
+				if len(plan.Actions) != 1 || plan.Actions[0].Kind != "notify" {
+					return
+				}
+				switch plan.Actions[0].Title {
+				case "Before backend":
+					if _, err := os.Stat(marker); !os.IsNotExist(err) {
+						t.Fatalf("frontend action before backend was dispatched late: %v", err)
+					}
+				case "After backend":
+					if _, err := os.Stat(marker); err != nil {
+						t.Fatalf("frontend action after backend was dispatched early: %v", err)
+					}
+				}
+			}
+		},
+	})
+	engine.cfg = defaultModeTestConfig(fake, []config.Action{
+		{Type: "notify", Title: "Before backend", Message: "Default first"},
+		{Type: "command.run", Executable: defaultCommand},
+		{Type: "notify", Title: "After backend", Message: "Default second"},
+		{Type: "app.stop", BundleID: "com.example.Default"},
+	}, []config.Action{
+		{Type: "notify", Title: "Rule active", Message: "Rules second"},
+		{Type: "app.stop", BundleID: "com.example.Rule"},
+	})
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("default backend did not run: %v", err)
+	}
+	if len(plans) != 5 {
+		t.Fatalf("plan events = %d, want 5: %#v", len(plans), plans)
+	}
+	seenRules := false
+	var titles []string
+	for _, plan := range plans {
+		if !reflect.DeepEqual(plan.EnforceStopBundleIDs, []string{"com.example.Default", "com.example.Rule"}) {
+			t.Fatalf("enforce_stop_bundle_ids = %#v", plan.EnforceStopBundleIDs)
+		}
+		if len(plan.Actions) != 1 {
+			t.Fatalf("public actions = %#v", plan.Actions)
+		}
+		action := plan.Actions[0]
+		if action.Phase == "rules" {
+			seenRules = true
+		} else if seenRules {
+			t.Fatalf("default action followed rules action: %#v", plans)
+		}
+		if action.Kind == "command.run" {
+			t.Fatalf("backend action leaked into public plan: %#v", plans)
+		}
+		titles = append(titles, action.Title)
+	}
+	if !reflect.DeepEqual(titles[:2], []string{"Before backend", "After backend"}) {
+		t.Fatalf("default YAML order changed: %#v", titles)
+	}
+}
+
+func TestDefaultFailureDoesNotStopRemainingDefaultOrRules(t *testing.T) {
+	fake := createActiveFakeMCPScript(t)
+	defaultMarker := filepath.Join(t.TempDir(), "default-ran")
+	ruleMarker := filepath.Join(t.TempDir(), "rule-ran")
+	engine := New(Deps{BrowserPolicyStore: &memoryPolicyStore{}})
+	engine.cfg = defaultModeTestConfig(fake, []config.Action{
+		{Type: "command.run", Executable: "/usr/bin/false"},
+		{Type: "command.run", Executable: "/bin/sleep", Args: []string{"2"}, TimeoutSeconds: 1},
+		{Type: "command.run", Executable: writeMarkerScript(t, defaultMarker)},
+	}, []config.Action{{
+		Type: "command.run", Executable: writeMarkerScript(t, ruleMarker),
+	}})
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{defaultMarker, ruleMarker} {
+		if _, err := os.Stat(marker); err != nil {
+			t.Fatalf("remaining action did not run (%s): %v", marker, err)
+		}
+	}
+}
+
+func TestDefaultTaskStartAcrossCycles(t *testing.T) {
+	fake, snapshotPath := createMutableFakeMCPScript(t)
+	first := "task_0123456789abcdef0123456789abcdef"
+	second := "task_1123456789abcdef0123456789abcdef"
+	var plans []rules.Plan
+	engine := New(Deps{
+		BrowserPolicyStore: &memoryPolicyStore{},
+		Emit: func(event string, value any) {
+			if event == "plan" {
+				plans = append(plans, value.(rules.Plan))
+			}
+		},
+	})
+	engine.cfg = defaultModeTestConfig(fake, []config.Action{{
+		Type: "notify", Title: "Task started", Message: "Default",
+	}}, nil)
+
+	snapshots := []string{
+		runningTaskSnapshot("Active", first),
+		runningTaskSnapshot("Active renamed", first),
+		runningTaskSnapshot("Active", first) + `\n` + runningTaskLine("Active second", second),
+	}
+	for _, snapshot := range snapshots {
+		writeMutableSnapshot(t, snapshotPath, snapshot)
+		if _, err := engine.RunCycleNow(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(plans) != 3 {
+		t.Fatalf("plan events = %d, want 3", len(plans))
+	}
+	defaultCounts := make([]int, len(plans))
+	for index, plan := range plans {
+		for _, action := range plan.Actions {
+			if action.Phase == "default" {
+				defaultCounts[index]++
+			}
+		}
+	}
+	if !reflect.DeepEqual(defaultCounts, []int{1, 0, 1}) {
+		t.Fatalf("default counts = %#v", defaultCounts)
+	}
+}
+
+func TestInvalidTaskIDObservationKeepsSnapshotAndRunsRules(t *testing.T) {
+	cases := []struct {
+		name            string
+		invalidSnapshot string
+		reason          string
+	}{
+		{name: "missing", invalidSnapshot: "## 2026-08-21\\n- [In Progress] Active", reason: "missing"},
+		{name: "duplicate", invalidSnapshot: runningTaskSnapshot("Active", "task_1123456789abcdef0123456789abcdef") + `\n` + runningTaskLine("Active duplicate", "task_1123456789abcdef0123456789abcdef"), reason: "duplicate"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, snapshotPath := createMutableFakeMCPScript(t)
+			first := "task_0123456789abcdef0123456789abcdef"
+			next := "task_2123456789abcdef0123456789abcdef"
+			var logOutput bytes.Buffer
+			var plans []rules.Plan
+			engine := New(Deps{
+				BrowserPolicyStore: &memoryPolicyStore{},
+				Logger:             logging.New(&logOutput, "info"),
+				Emit: func(event string, value any) {
+					if event == "plan" {
+						plans = append(plans, value.(rules.Plan))
+					}
+				},
+			})
+			engine.cfg = defaultModeTestConfig(fake, []config.Action{{
+				Type: "notify", Title: "Task started", Message: "Default",
+			}}, []config.Action{{
+				Type: "notify", Title: "Rule active", Message: "Rules continue",
+			}})
+
+			writeMutableSnapshot(t, snapshotPath, runningTaskSnapshot("Active", first))
+			if _, err := engine.RunCycleNow(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			writeMutableSnapshot(t, snapshotPath, tc.invalidSnapshot)
+			if _, err := engine.RunCycleNow(context.Background()); err != nil {
+				t.Fatalf("invalid observation stopped cycle: %v", err)
+			}
+			if got := engine.Snapshot().State; got != state.StateActive {
+				t.Fatalf("state = %q, want active", got)
+			}
+			if _, ok := engine.taskIDs[first]; !ok || len(engine.taskIDs) != 1 {
+				t.Fatalf("task snapshot changed: %#v", engine.taskIDs)
+			}
+			invalidPlans := plansForCycle(plans, 2)
+			if len(invalidPlans) != 1 || len(invalidPlans[0].Actions) != 1 || invalidPlans[0].Actions[0].Phase != "rules" {
+				t.Fatalf("invalid observation plan = %#v", invalidPlans)
+			}
+			if !strings.Contains(logOutput.String(), `"event":"invalid_task_id_observation"`) || !strings.Contains(logOutput.String(), `"reason":"`+tc.reason+`"`) {
+				t.Fatalf("missing invalid observation warning: %s", logOutput.String())
+			}
+			if strings.Contains(logOutput.String(), first) || strings.Contains(logOutput.String(), "Active") {
+				t.Fatalf("invalid observation warning leaked task data: %s", logOutput.String())
+			}
+
+			writeMutableSnapshot(t, snapshotPath, runningTaskSnapshot("Active next", next))
+			if _, err := engine.RunCycleNow(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			recoveryPlans := plansForCycle(plans, 3)
+			if len(recoveryPlans) != 2 || recoveryPlans[0].Actions[0].Phase != "default" || recoveryPlans[1].Actions[0].Phase != "rules" {
+				t.Fatalf("recovery plan = %#v", recoveryPlans)
+			}
+		})
+	}
+}
+
+func TestDryRunTaskStartIsNotReplayedWhenExecutionIsEnabled(t *testing.T) {
+	fake, snapshotPath := createMutableFakeMCPScript(t)
+	taskID := "task_0123456789abcdef0123456789abcdef"
+	marker := filepath.Join(t.TempDir(), "default-ran")
+	writeMutableSnapshot(t, snapshotPath, runningTaskSnapshot("Active", taskID))
+	engine := New(Deps{BrowserPolicyStore: &memoryPolicyStore{}})
+	engine.cfg = defaultModeTestConfig(fake, []config.Action{{
+		Type: "command.run", Executable: writeMarkerScript(t, marker),
+	}}, nil)
+	engine.cfg.Safety.DryRun = true
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	engine.cfg.Safety.DryRun = false
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("dry-run action was replayed: %v", err)
+	}
+}
+
+func TestTaskSnapshotStatePreservedAcrossNonSuccessTransitions(t *testing.T) {
+	taskID := "task_0123456789abcdef0123456789abcdef"
+	assertPreserved := func(t *testing.T, engine *Engine) {
+		t.Helper()
+		if !engine.taskIDsSet {
+			t.Fatal("task snapshot initialization was reset")
+		}
+		if _, ok := engine.taskIDs[taskID]; !ok || len(engine.taskIDs) != 1 {
+			t.Fatalf("task snapshot changed: %#v", engine.taskIDs)
+		}
+	}
+
+	t.Run("pause", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		engine := New(Deps{BrowserPolicyStore: &memoryPolicyStore{}})
+		engine.taskIDs = map[string]struct{}{taskID: {}}
+		engine.taskIDsSet = true
+		if err := engine.Pause(time.Now().Add(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		assertPreserved(t, engine)
+	})
+
+	t.Run("fetch failure and release", func(t *testing.T) {
+		engine := New(Deps{BrowserPolicyStore: &memoryPolicyStore{}})
+		engine.taskIDs = map[string]struct{}{taskID: {}}
+		engine.taskIDsSet = true
+		engine.cfg = defaultModeTestConfig("/path/that/does/not/exist", nil, nil)
+		engine.cfg.Polling.FailureGraceSeconds = 0
+		if _, err := engine.RunCycleNow(context.Background()); err == nil {
+			t.Fatal("fetch failure was accepted")
+		}
+		assertPreserved(t, engine)
+	})
+
+	t.Run("invalid reload", func(t *testing.T) {
+		configPath := filepath.Join(t.TempDir(), "invalid.yml")
+		if err := os.WriteFile(configPath, []byte("version: ["), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		engine := New(Deps{ConfigPath: configPath, BrowserPolicyStore: &memoryPolicyStore{}})
+		engine.taskIDs = map[string]struct{}{taskID: {}}
+		engine.taskIDsSet = true
+		if result := engine.Reload(); result.OK {
+			t.Fatalf("invalid reload = %#v", result)
+		}
+		assertPreserved(t, engine)
+	})
+}
+
 func TestSafetyGateShellDeniedAtRuntime(t *testing.T) {
 	engine := New(Deps{})
 	results := engine.executeBackendActions(context.Background(), []rules.PlannedAction{{ActionID: "1-1", Kind: "command.run", Shell: true, Executable: "/bin/echo"}}, false, false)
@@ -945,6 +1329,90 @@ func createActiveFakeMCPScript(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+func createMutableFakeMCPScript(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	snapshotPath := filepath.Join(dir, "snapshot.txt")
+	path := filepath.Join(dir, "fake-tcc2-mutable")
+	script := fmt.Sprintf(`#!/bin/sh
+request_id=0
+while IFS= read -r line; do
+  case "$line" in
+    *'"method":"notifications/initialized"'*) continue ;;
+  esac
+  request_id=$((request_id + 1))
+  case "$line" in
+    *'"method":"initialize"'*) printf '{"jsonrpc":"2.0","id":%%s,"result":{"protocolVersion":"2025-06-18","serverInfo":{"name":"fake"}}}\n' "$request_id" ;;
+    *'"name":"get_user"'*) printf '{"jsonrpc":"2.0","id":%%s,"result":{"content":[{"type":"text","text":"- **Timezone:** UTC\\n- **Start of Day:** -05:00:00"}]}}\n' "$request_id" ;;
+    *'"name":"get_taskchute"'*) text=$(cat %q); printf '{"jsonrpc":"2.0","id":%%s,"result":{"content":[{"type":"text","text":"%%s"}]}}\n' "$request_id" "$text" ;;
+  esac
+done
+`, snapshotPath)
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path, snapshotPath
+}
+
+func runningTaskSnapshot(name, taskID string) string {
+	return "## 2026-08-21\\n" + runningTaskLine(name, taskID)
+}
+
+func runningTaskLine(name, taskID string) string {
+	return "- [In Progress] " + name + " [ID: " + taskID + "]"
+}
+
+func writeMutableSnapshot(t *testing.T, path, snapshot string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(snapshot), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func plansForCycle(plans []rules.Plan, cycleID int64) []rules.Plan {
+	var matches []rules.Plan
+	for _, plan := range plans {
+		if plan.CycleID == cycleID {
+			matches = append(matches, plan)
+		}
+	}
+	return matches
+}
+
+func writeMarkerScript(t *testing.T, marker string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "write-marker.sh")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf ran > '"+marker+"'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func defaultModeTestConfig(executable string, defaultActions, ruleActions []config.Action) *config.Config {
+	return &config.Config{
+		Version: constants.ConfigSchemaVersion,
+		TaskSource: config.TaskSource{
+			Type:       "tcc2_mcp",
+			Executable: executable,
+			Args:       []string{"mcp"},
+		},
+		Polling: config.Polling{
+			IntervalSeconds:     constants.MinPollIntervalSeconds,
+			TimeoutSeconds:      constants.DefaultPollTimeoutSeconds,
+			FailureGraceSeconds: constants.DefaultFailureGraceSeconds,
+			FailurePolicy:       "release_controls",
+		},
+		Safety:  config.Safety{},
+		Logging: config.Logging{Level: constants.DefaultLogLevel, RetainDays: constants.DefaultLogRetainDays},
+		Default: config.Default{OnTaskStart: defaultActions},
+		Rules: []config.Rule{{
+			ID:     "active",
+			Match:  config.Match{TaskNameContains: []string{"Active"}},
+			Ensure: ruleActions,
+		}},
+	}
 }
 
 func browserTestConfig(executable string, dryRun bool) *config.Config {

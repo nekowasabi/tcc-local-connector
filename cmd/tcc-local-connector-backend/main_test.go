@@ -82,13 +82,23 @@ func TestRunOnceEmitsJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	var result struct {
-		DryRun bool `json:"dry_run"`
+		DryRun  bool `json:"dry_run"`
+		Actions []struct {
+			Phase string `json:"phase"`
+			Title string `json:"title"`
+		} `json:"actions"`
 	}
 	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
 	if !result.DryRun {
 		t.Fatal("run-once output did not report dry_run=true")
+	}
+	if len(result.Actions) != 3 {
+		t.Fatalf("run-once actions = %#v", result.Actions)
+	}
+	if result.Actions[0].Phase != "default" || result.Actions[1].Phase != "default" || result.Actions[2].Phase != "rules" {
+		t.Fatalf("run-once phases = %#v", result.Actions)
 	}
 }
 
@@ -149,7 +159,7 @@ func writeRunConfig(t *testing.T) string {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "config.yml")
-	content := []byte("version: 2\ntask_source:\n  executable: " + fake + "\npolling:\n  timeout_seconds: 1\nrules: []\n")
+	content := []byte("version: 2\ntask_source:\n  executable: " + fake + "\npolling:\n  timeout_seconds: 1\ndefault:\n  on_task_start:\n    - type: notify\n      title: Default one\n      message: First\n    - type: notify\n      title: Default two\n      message: Second\nrules:\n  - id: active\n    match:\n      task_name_contains: [E2E]\n    ensure:\n      - type: notify\n        title: Rule\n        message: Third\n")
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
 	}

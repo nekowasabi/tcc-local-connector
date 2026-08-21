@@ -21,6 +21,11 @@ type Entry struct {
 	Level      string    `json:"level"`
 	Component  string    `json:"component"`
 	Event      string    `json:"event"`
+	CycleID    int64     `json:"cycle_id,omitempty"`
+	ActionID   string    `json:"action_id,omitempty"`
+	Phase      string    `json:"phase,omitempty"`
+	Status     string    `json:"status,omitempty"`
+	Reason     string    `json:"reason,omitempty"`
 	RuleID     string    `json:"rule_id,omitempty"`
 	ActionType string    `json:"action_type,omitempty"`
 	DurationMS int64     `json:"duration_ms,omitempty"`

@@ -17,6 +17,57 @@ func TestValidateAcceptsMinimalConfig(t *testing.T) {
 	}
 }
 
+func TestValidateDefaultOnTaskStartNormalizesAndPreservesCompatibility(t *testing.T) {
+	cfg := defaults()
+	cfg.TaskSource.Executable = "/bin/echo"
+	if _, errs := Validate(&cfg); len(errs) != 0 || cfg.Default.OnTaskStart == nil || len(cfg.Default.OnTaskStart) != 0 {
+		t.Fatalf("undefined default = %#v, %#v", cfg.Default, errs)
+	}
+
+	cfg.Default.OnTaskStart = []Action{{Type: "command.run", Executable: "/bin/echo"}}
+	if _, errs := Validate(&cfg); len(errs) != 0 {
+		t.Fatalf("valid default = %#v", errs)
+	}
+	if got := cfg.Default.OnTaskStart[0].TimeoutSeconds; got != constants.DefaultActionTimeoutSeconds {
+		t.Fatalf("default timeout = %d, want %d", got, constants.DefaultActionTimeoutSeconds)
+	}
+}
+
+func TestValidateDefaultOnTaskStartRejectsUnsafeAndConflictingActions(t *testing.T) {
+	cases := []struct {
+		name   string
+		action []Action
+		code   string
+	}{
+		{name: "browser block", action: []Action{{Type: constants.BrowserBlockActionType}}, code: codeUnsupportedAction},
+		{name: "timeout", action: []Action{{Type: "command.run", Executable: "/bin/echo", TimeoutSeconds: constants.MaxActionTimeoutSeconds + 1}}, code: codeValueOutOfRange},
+		{name: "shell", action: []Action{{Type: "command.run", Executable: "/bin/echo", Shell: true}}, code: codeShellNotAllowed},
+		{name: "app conflict", action: []Action{{Type: "app.start", BundleID: "com.example.App"}, {Type: "app.stop", BundleID: "com.example.App"}}, code: codeRuleConflictSamePriority},
+		{name: "process conflict", action: []Action{{Type: "process.start", ProcessID: "worker", Executable: "/bin/echo"}, {Type: "process.stop", ProcessID: "worker"}}, code: codeRuleConflictSamePriority},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := defaults()
+			cfg.TaskSource.Executable = "/bin/echo"
+			cfg.Default.OnTaskStart = tc.action
+			_, errs := Validate(&cfg)
+			if !hasValidationCode(errs, tc.code) {
+				t.Fatalf("errors=%#v, want %s", errs, tc.code)
+			}
+		})
+	}
+}
+
+func TestValidateDefaultOnTaskStartAllowsCrossPhaseProcessID(t *testing.T) {
+	cfg := defaults()
+	cfg.TaskSource.Executable = "/bin/echo"
+	cfg.Default.OnTaskStart = []Action{{Type: "process.start", ProcessID: "worker", Executable: "/bin/echo"}}
+	cfg.Rules = []Rule{{ID: "rule", Ensure: []Action{{Type: "process.start", ProcessID: "worker", Executable: "/bin/echo"}}}}
+	if _, errs := Validate(&cfg); len(errs) != 0 {
+		t.Fatalf("cross-phase process ID rejected: %#v", errs)
+	}
+}
+
 func TestValidateRejectsUnsafeAndInvalidValues(t *testing.T) {
 	cfg := defaults()
 	cfg.Version = 99

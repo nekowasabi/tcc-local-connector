@@ -89,6 +89,10 @@ func Validate(cfg *Config) (*Config, []ValidationError) {
 	if outOfRange(cfg.Logging.RetainDays, constants.MinLogRetainDays, constants.MaxLogRetainDays) || len(cfg.Rules) > constants.MaxRules {
 		errors = append(errors, validation(codeValueOutOfRange, "logging.retain_days"))
 	}
+	if cfg.Default.OnTaskStart == nil {
+		cfg.Default.OnTaskStart = []Action{}
+	}
+	errors = append(errors, validateDefaultActions(cfg.Default.OnTaskStart, cfg.Safety.AllowShell)...)
 	ruleIDs, processIDs, conflicts := map[string]bool{}, map[string]bool{}, map[string]string{}
 	for i := range cfg.Rules {
 		errors = append(errors, validateRule(&cfg.Rules[i], i, cfg.Safety.AllowShell, ruleIDs, processIDs, conflicts)...)
@@ -98,6 +102,41 @@ func Validate(cfg *Config) (*Config, []ValidationError) {
 	}
 	return cfg, nil
 }
+
+func validateDefaultActions(actions []Action, allowShell bool) []ValidationError {
+	var errors []ValidationError
+	if len(actions) > constants.MaxActionsPerRule {
+		errors = append(errors, validation(codeValueOutOfRange, "default.on_task_start"))
+	}
+	processIDs, conflicts, processConflicts := map[string]bool{}, map[string]string{}, map[string]string{}
+	for i := range actions {
+		action := &actions[i]
+		path := "default.on_task_start[" + strconvItoa(i) + "]"
+		if action.Type == constants.BrowserBlockActionType {
+			errors = append(errors, validation(codeUnsupportedAction, path+".type"))
+			continue
+		}
+		if action.Type == "command.run" && action.TimeoutSeconds == 0 {
+			action.TimeoutSeconds = constants.DefaultActionTimeoutSeconds
+		}
+		errors = append(errors, validateAction(action, path, "on_task_start", allowShell, processIDs, conflicts, 0)...)
+		if action.Type == "process.start" || action.Type == "process.stop" {
+			recordProcessConflict(processConflicts, action.Type, action.ProcessID, path, &errors)
+		}
+	}
+	return errors
+}
+
+func recordProcessConflict(conflicts map[string]string, verb, processID, path string, errors *[]ValidationError) {
+	if processID == "" || !reProcessID.MatchString(processID) {
+		return
+	}
+	if previous := conflicts[processID]; previous != "" && previous != verb {
+		*errors = append(*errors, validation(codeRuleConflictSamePriority, path))
+	}
+	conflicts[processID] = verb
+}
+
 func validateRule(rule *Rule, index int, allowShell bool, ruleIDs, processIDs map[string]bool, conflicts map[string]string) []ValidationError {
 	var errors []ValidationError
 	base := "rules[" + strconvItoa(index) + "]"

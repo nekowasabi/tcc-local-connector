@@ -184,11 +184,11 @@ func runOnce(path string, output io.Writer, dryRun bool) error {
 	if err := backend.SetDryRun(dryRun); err != nil {
 		return err
 	}
-	var plan rules.Plan
+	var actions []rules.PlannedAction
 	backend.SetEventSink(func(name string, data any) {
 		if name == "plan" {
 			if value, ok := data.(rules.Plan); ok {
-				plan = value
+				actions = append(actions, value.Actions...)
 			}
 		}
 	})
@@ -196,7 +196,7 @@ func runOnce(path string, output io.Writer, dryRun bool) error {
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(output, "{\"cycle_id\":%d,\"dry_run\":%t,\"state\":%q,\"actions\":%s}\n", cycleID, dryRun, backend.Snapshot().State, mustJSON(plan.Actions))
+	_, err = fmt.Fprintf(output, "{\"cycle_id\":%d,\"dry_run\":%t,\"state\":%q,\"actions\":%s}\n", cycleID, dryRun, backend.Snapshot().State, mustJSON(actions))
 	return err
 }
 
