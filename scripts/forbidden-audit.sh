@@ -52,7 +52,7 @@ check_count "D-03" "rg -n '\"/bin/sh\"|\"-c\"|bash -c|zsh -c|sh -c' internal cmd
 check_count "D-04" "rg -n 'fmt\\.Print|os\\.Stdout|println\\(' internal cmd" "4"
 check_count "D-05" "rg -n 'wsl\\.exe|GOOS=windows|go:build windows|NotifyIcon|PowerShell|wslpath' internal cmd macos/Sources scripts/make-app-bundle.sh scripts/dev-run.sh" "0"
 check_count "D-06" "rg -n 'Logged in as|\\bEmail\\b|Bearer|password|secret|credential' internal macos/Sources" "5"
-check_count "D-07" "rg -n 'com\\.tinyspeck|com\\.amazon\\.Lassen|/opt/homebrew|/Users/takets' internal cmd macos/Sources --glob '!**/testdata/**'" "0"
+check_count "D-07" "rg -n 'com\\.tinyspeck|com\\.amazon\\.Lassen|/opt/homebrew|/Users/[A-Za-z0-9_.-]+' internal cmd macos/Sources --glob '!**/testdata/**'" "0"
 check_count "D-08" "rg -ni 'in-progress count|in_progress_count' internal cmd macos/Sources" "0"
 check_count "D-09" "rg -n '\\b(60|180|30000|65536|1048576|86400|21600)\\b' internal/engine internal/rules internal/state internal/ledger internal/config --glob '!*_test.go'" "0"
 check_count "D-10" "rg -n 'time\\.Since|monotonic|remainingSeconds|elapsedSeconds|time\\.Tick' internal/state" "0"
