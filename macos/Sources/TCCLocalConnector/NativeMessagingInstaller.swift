@@ -14,8 +14,6 @@ struct NativeMessagingBrowser: Equatable {
 }
 
 enum NativeMessagingCatalog {
-    // Why: Catalog-driven install instead of per-browser CLI. Adding Chrome is filling
-    // allowedOrigins (and shipping a host if it is not the shared Firefox binary).
     static let browsers: [NativeMessagingBrowser] = [
         NativeMessagingBrowser(
             id: "firefox",
@@ -24,15 +22,6 @@ enum NativeMessagingCatalog {
             manifestDirectory: "Mozilla/NativeMessagingHosts",
             description: "TCC Local Connector Firefox native messaging host",
             allowedExtensions: ["firefox-domain-blocker@tcc-local-connector.takets.jp"],
-            allowedOrigins: []
-        ),
-        NativeMessagingBrowser(
-            id: "chrome",
-            hostResourceName: "tcc-firefox-native-host",
-            manifestName: "jp.takets.tcc_local_connector.chrome",
-            manifestDirectory: "Google/Chrome/NativeMessagingHosts",
-            description: "TCC Local Connector Chrome native messaging host",
-            allowedExtensions: [],
             allowedOrigins: []
         ),
     ]

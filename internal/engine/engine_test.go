@@ -50,6 +50,51 @@ func TestNewRestoresActivePause(t *testing.T) {
 	}
 }
 
+func TestNewUsesConfigLoggingLevelAndRetainDays(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	configPath := filepath.Join(home, "config.yml")
+	body := "version: 2\ntask_source:\n  executable: /bin/echo\nlogging:\n  level: error\n  retain_days: 1\n"
+	if err := os.WriteFile(configPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stateDir := filepath.Join(home, constants.StateDirRelPath)
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	old := filepath.Join(stateDir, constants.LogFileName+".1")
+	keep := filepath.Join(stateDir, constants.LogFileName)
+	other := filepath.Join(stateDir, "other.log")
+	for _, path := range []string{old, keep, other} {
+		if err := os.WriteFile(path, []byte("log"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chtimes(old, now.AddDate(0, 0, -2), now.AddDate(0, 0, -2)); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	engine := New(Deps{ConfigPath: configPath, LogWriter: &output})
+	engine.logger.Log(logging.Entry{Level: "debug", Event: "debug-dropped"})
+	engine.logger.Log(logging.Entry{Level: "info", Event: "info-dropped"})
+	engine.logger.Log(logging.Entry{Level: "error", Event: "error-kept"})
+	if bytes.Contains(output.Bytes(), []byte("debug-dropped")) || bytes.Contains(output.Bytes(), []byte("info-dropped")) {
+		t.Fatalf("below-threshold logs written: %q", output.String())
+	}
+	if !bytes.Contains(output.Bytes(), []byte("error-kept")) {
+		t.Fatalf("error log missing: %q", output.String())
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatalf("expired log still exists: %v", err)
+	}
+	for _, path := range []string{keep, other} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+	}
+}
+
 func TestMachineReleasesAfterFailureGraceWithoutSuccess(t *testing.T) {
 	machine := state.NewMachine()
 	now := time.Now()
@@ -199,6 +244,25 @@ func TestRunCycleNowPublishesEnforcedBrowserPolicy(t *testing.T) {
 	}
 }
 
+func TestRunCycleNowPublishesEnforcedBrowserPolicyWhenTaskIDInvalid(t *testing.T) {
+	fake, snapshot := createMutableFakeMCPScript(t)
+	policyPath := filepath.Join(t.TempDir(), constants.BrowserPolicyFileName)
+	engine := New(Deps{BrowserPolicyPath: policyPath})
+	engine.cfg = browserTestConfig(fake, false)
+
+	writeMutableSnapshot(t, snapshot, "## 2026-08-07\\n- [In Progress] Active")
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	missing := readBrowserPolicy(t, policyPath)
+	if engine.Snapshot().ParseOK {
+		t.Fatal("missing task_id should set parse_ok false")
+	}
+	if !missing.Enforce || missing.DryRun || !reflect.DeepEqual(missing.Domains, []string{"example.com"}) {
+		t.Fatalf("missing task_id policy = %#v", missing)
+	}
+}
+
 func TestEngine_ReleaseControlsPublishesEmptyPolicy(t *testing.T) {
 	fake := createActiveFakeMCPScript(t)
 	policyPath := filepath.Join(t.TempDir(), constants.BrowserPolicyFileName)
@@ -224,8 +288,15 @@ func TestEngine_ReleaseControlsPublishesEmptyPolicy(t *testing.T) {
 func TestReportActionsKeepsBrowserPolicyWhenFrontendActionFails(t *testing.T) {
 	fake := createActiveFakeMCPScript(t)
 	policyPath := filepath.Join(t.TempDir(), constants.BrowserPolicyFileName)
-	engine := New(Deps{BrowserPolicyPath: policyPath})
-	engine.cfg = browserTestConfig(fake, false)
+	var plans []rules.Plan
+	engine := New(Deps{BrowserPolicyPath: policyPath, Emit: func(event string, value any) {
+		if event == "plan" {
+			plans = append(plans, value.(rules.Plan))
+		}
+	}})
+	cfg := browserTestConfig(fake, false)
+	cfg.Rules[0].Ensure = append(cfg.Rules[0].Ensure, config.Action{Type: "app.stop", BundleID: "com.example.App"})
+	engine.cfg = cfg
 	if _, err := engine.RunCycleNow(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -234,8 +305,7 @@ func TestReportActionsKeepsBrowserPolicyWhenFrontendActionFails(t *testing.T) {
 		t.Fatalf("setup policy = %#v", before)
 	}
 	engine.ReportActions(engine.Snapshot().CycleID, []ActionResult{
-		{ActionID: "1-1", Status: "accepted"},
-		{ActionID: "1-2", Status: "refused", Code: "quit_refused"},
+		{ActionID: "1-1", Status: "refused", Code: "quit_refused"},
 	})
 	policy := readBrowserPolicy(t, policyPath)
 	if !policy.Enforce || policy.DryRun || !reflect.DeepEqual(policy.Domains, []string{"example.com"}) || !reflect.DeepEqual(policy.PlannedDomains, []string{"example.com"}) {
@@ -243,6 +313,17 @@ func TestReportActionsKeepsBrowserPolicyWhenFrontendActionFails(t *testing.T) {
 	}
 	if policy.Generation != before.Generation {
 		t.Fatalf("generation changed from %d to %d", before.Generation, policy.Generation)
+	}
+	plans = nil
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	after := readBrowserPolicy(t, policyPath)
+	if !after.Enforce || !reflect.DeepEqual(after.Domains, []string{"example.com"}) {
+		t.Fatalf("later cycle policy = %#v", after)
+	}
+	if len(plans) == 0 || !reflect.DeepEqual(plans[len(plans)-1].EnforceStopBundleIDs, []string{"com.example.App"}) {
+		t.Fatalf("later cycle stops = %#v", plans)
 	}
 }
 
@@ -262,6 +343,50 @@ func TestEngine_PauseAndResumePublishEmptyPolicy(t *testing.T) {
 	resumed := readBrowserPolicy(t, policyPath)
 	if resumed.Generation <= paused.Generation || resumed.Enforce {
 		t.Fatalf("resumed policy = %#v after %#v", resumed, paused)
+	}
+}
+
+func TestEngine_ReloadAndResumeRestoreEnsureWithoutWaitingInterval(t *testing.T) {
+	fake := createActiveFakeMCPScript(t)
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	writeEnsureConfig(t, configPath, fake, 3600)
+	policyPath := filepath.Join(t.TempDir(), constants.BrowserPolicyFileName)
+	var plans []rules.Plan
+	engine := New(Deps{ConfigPath: configPath, BrowserPolicyPath: policyPath, Emit: func(event string, value any) {
+		if event == "plan" {
+			plans = append(plans, value.(rules.Plan))
+		}
+	}})
+
+	result := engine.Reload()
+	if !result.OK {
+		t.Fatalf("Reload() = %#v", result)
+	}
+	afterReload := readBrowserPolicy(t, policyPath)
+	if !afterReload.Enforce || !reflect.DeepEqual(afterReload.Domains, []string{"example.com"}) {
+		t.Fatalf("reload policy = %#v", afterReload)
+	}
+	if len(plans) == 0 || !reflect.DeepEqual(plans[len(plans)-1].EnforceStopBundleIDs, []string{"com.example.App"}) {
+		t.Fatalf("reload plans = %#v", plans)
+	}
+
+	if err := engine.Pause(time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	paused := readBrowserPolicy(t, policyPath)
+	if paused.Enforce || len(paused.Domains) != 0 {
+		t.Fatalf("paused policy = %#v", paused)
+	}
+	plans = nil
+	if err := engine.Resume(); err != nil {
+		t.Fatal(err)
+	}
+	afterResume := readBrowserPolicy(t, policyPath)
+	if !afterResume.Enforce || !reflect.DeepEqual(afterResume.Domains, []string{"example.com"}) {
+		t.Fatalf("resume policy = %#v", afterResume)
+	}
+	if len(plans) == 0 || !reflect.DeepEqual(plans[len(plans)-1].EnforceStopBundleIDs, []string{"com.example.App"}) {
+		t.Fatalf("resume plans = %#v", plans)
 	}
 }
 
@@ -382,7 +507,7 @@ func TestRunCycleNow_DoesNotLeakMuOnErrorPath(t *testing.T) {
 func TestExecuteBackendActionsDryRunSuppressesCommandFailure(t *testing.T) {
 	events := make(chan string, 1)
 	engine := New(Deps{Emit: func(name string, _ any) { events <- name }})
-	engine.executeBackendActions(context.Background(), []rules.PlannedAction{{Kind: "command.run", Executable: "/not/a/command"}}, true, false)
+	engine.executeBackendActionsForCycle(context.Background(), 0, []rules.PlannedAction{{Kind: "command.run", Executable: "/not/a/command"}}, true, false)
 	select {
 	case name := <-events:
 		t.Fatalf("unexpected event %q", name)
@@ -393,7 +518,7 @@ func TestExecuteBackendActionsDryRunSuppressesCommandFailure(t *testing.T) {
 func TestExecuteBackendActionsRefusesShellWithoutPermission(t *testing.T) {
 	events := make(chan string, 1)
 	engine := New(Deps{Emit: func(name string, _ any) { events <- name }})
-	engine.executeBackendActions(context.Background(), []rules.PlannedAction{{Kind: "command.run", Shell: true, Executable: "/not/a/command"}}, false, false)
+	engine.executeBackendActionsForCycle(context.Background(), 0, []rules.PlannedAction{{Kind: "command.run", Shell: true, Executable: "/not/a/command"}}, false, false)
 	if name := <-events; name != "notify" {
 		t.Fatalf("event = %q, want notify", name)
 	}
@@ -446,7 +571,7 @@ func TestEngine_ReloadSuccessAndStateChangedEvent(t *testing.T) {
 	}
 
 	engine := New(Deps{ConfigPath: configPath})
-	events := make(chan string, 1)
+	events := make(chan string, 16)
 	engine.SetEventSink(func(name string, _ any) {
 		events <- name
 	})
@@ -746,7 +871,7 @@ func TestDryRunProcessStartDoesNotWriteLedger(t *testing.T) {
 
 func TestDryRunCommandRunDoesNotExecute(t *testing.T) {
 	engine := New(Deps{})
-	results := engine.executeBackendActions(context.Background(), []rules.PlannedAction{{ActionID: "1-1", Kind: "command.run", Executable: "/not/a/program"}}, true, false)
+	results := engine.executeBackendActionsForCycle(context.Background(), 0, []rules.PlannedAction{{ActionID: "1-1", Kind: "command.run", Executable: "/not/a/program"}}, true, false)
 	if len(results) != 1 || results[0].Status != "skipped" {
 		t.Fatalf("results = %#v, want skipped", results)
 	}
@@ -824,7 +949,7 @@ func TestDryRunSkipsSideEffects(t *testing.T) {
 		t.Fatal(err)
 	}
 	engine := New(Deps{})
-	results := engine.executeBackendActions(context.Background(), []rules.PlannedAction{{
+	results := engine.executeBackendActionsForCycle(context.Background(), 0, []rules.PlannedAction{{
 		ActionID: "1-1", Kind: "command.run", Executable: script,
 	}}, true, false)
 	if len(results) != 1 || results[0].Status != "skipped" {
@@ -1134,7 +1259,7 @@ func TestTaskSnapshotStatePreservedAcrossNonSuccessTransitions(t *testing.T) {
 
 func TestSafetyGateShellDeniedAtRuntime(t *testing.T) {
 	engine := New(Deps{})
-	results := engine.executeBackendActions(context.Background(), []rules.PlannedAction{{ActionID: "1-1", Kind: "command.run", Shell: true, Executable: "/bin/echo"}}, false, false)
+	results := engine.executeBackendActionsForCycle(context.Background(), 0, []rules.PlannedAction{{ActionID: "1-1", Kind: "command.run", Shell: true, Executable: "/bin/echo"}}, false, false)
 	if len(results) != 1 || results[0].Status != "failed" || results[0].Code != "permission_denied" {
 		t.Fatalf("results = %#v, want permission_denied", results)
 	}
@@ -1142,7 +1267,7 @@ func TestSafetyGateShellDeniedAtRuntime(t *testing.T) {
 
 func TestSafetyGateNonShellActionUnaffected(t *testing.T) {
 	engine := New(Deps{})
-	results := engine.executeBackendActions(context.Background(), []rules.PlannedAction{{ActionID: "1-1", Kind: "command.run", Executable: "/usr/bin/true"}}, false, false)
+	results := engine.executeBackendActionsForCycle(context.Background(), 0, []rules.PlannedAction{{ActionID: "1-1", Kind: "command.run", Executable: "/usr/bin/true"}}, false, false)
 	if len(results) != 1 || results[0].Status != "accepted" {
 		t.Fatalf("results = %#v, want accepted", results)
 	}
@@ -1155,7 +1280,7 @@ func TestSafetyGateUnmanagedProcessDoesNotSignal(t *testing.T) {
 	}
 	engine := New(Deps{})
 	engine.ledger = ledger.NewManager(value)
-	results := engine.executeBackendActions(context.Background(), []rules.PlannedAction{{ActionID: "1-1", Kind: "process.stop", ProcessID: "missing"}}, false, false)
+	results := engine.executeBackendActionsForCycle(context.Background(), 0, []rules.PlannedAction{{ActionID: "1-1", Kind: "process.stop", ProcessID: "missing"}}, false, false)
 	if len(results) != 1 || results[0].Status != "failed" || results[0].Code != "permission_denied" {
 		t.Fatalf("results = %#v, want permission_denied", results)
 	}
@@ -1180,7 +1305,7 @@ func TestEngine_ExecuteBackendActions_ProcessStart(t *testing.T) {
 	}
 	engine := New(Deps{})
 	engine.ledger = ledger.NewManager(value)
-	results := engine.executeBackendActions(context.Background(), []rules.PlannedAction{{ActionID: "1-1", Kind: "process.start", ProcessID: "test-process", Executable: "/bin/sleep", Args: []string{"1000"}}}, false, false)
+	results := engine.executeBackendActionsForCycle(context.Background(), 0, []rules.PlannedAction{{ActionID: "1-1", Kind: "process.start", ProcessID: "test-process", Executable: "/bin/sleep", Args: []string{"1000"}}}, false, false)
 	if len(results) != 1 || results[0].Status != "accepted" {
 		t.Fatalf("results = %#v, want status accepted", results)
 	}
@@ -1189,7 +1314,7 @@ func TestEngine_ExecuteBackendActions_ProcessStart(t *testing.T) {
 func TestEngine_CommandRun_OutputTruncated(t *testing.T) {
 	engine := New(Deps{})
 	script := createHugeOutputScript(t)
-	results := engine.executeBackendActions(context.Background(), []rules.PlannedAction{{
+	results := engine.executeBackendActionsForCycle(context.Background(), 0, []rules.PlannedAction{{
 		ActionID:   "1-1",
 		Kind:       "command.run",
 		Executable: script,
@@ -1204,7 +1329,7 @@ func TestEngine_CommandRun_OutputTruncated(t *testing.T) {
 
 func TestEngine_CommandRun_Timeout(t *testing.T) {
 	engine := New(Deps{})
-	results := engine.executeBackendActions(context.Background(), []rules.PlannedAction{{ActionID: "1-1", Kind: "command.run", Executable: "/bin/sleep", Args: []string{"2"}, TimeoutSeconds: 1}}, false, false)
+	results := engine.executeBackendActionsForCycle(context.Background(), 0, []rules.PlannedAction{{ActionID: "1-1", Kind: "command.run", Executable: "/bin/sleep", Args: []string{"2"}, TimeoutSeconds: 1}}, false, false)
 	if len(results) != 1 || results[0].Status != "failed" || results[0].Code != "timeout" {
 		t.Fatalf("results = %#v", results)
 	}
@@ -1212,7 +1337,7 @@ func TestEngine_CommandRun_Timeout(t *testing.T) {
 
 func TestEngine_CommandRun_NoShellByDefault(t *testing.T) {
 	engine := New(Deps{})
-	results := engine.executeBackendActions(context.Background(), []rules.PlannedAction{{ActionID: "1-1", Kind: "command.run", Shell: true, Executable: "/bin/echo", Args: []string{"ok"}}}, false, false)
+	results := engine.executeBackendActionsForCycle(context.Background(), 0, []rules.PlannedAction{{ActionID: "1-1", Kind: "command.run", Shell: true, Executable: "/bin/echo", Args: []string{"ok"}}}, false, false)
 	if len(results) != 1 || results[0].Status != "failed" || results[0].Code != "permission_denied" {
 		t.Fatalf("results = %#v", results)
 	}
@@ -1220,7 +1345,7 @@ func TestEngine_CommandRun_NoShellByDefault(t *testing.T) {
 
 func TestEngine_CommandRun_ShellAllowed(t *testing.T) {
 	engine := New(Deps{})
-	results := engine.executeBackendActions(context.Background(), []rules.PlannedAction{{ActionID: "1-1", Kind: "command.run", Shell: true, Executable: "/bin/echo", Args: []string{"ok"}}}, false, true)
+	results := engine.executeBackendActionsForCycle(context.Background(), 0, []rules.PlannedAction{{ActionID: "1-1", Kind: "command.run", Shell: true, Executable: "/bin/echo", Args: []string{"ok"}}}, false, true)
 	if len(results) != 1 || results[0].Status != "accepted" {
 		t.Fatalf("results = %#v", results)
 	}
@@ -1412,6 +1537,14 @@ func defaultModeTestConfig(executable string, defaultActions, ruleActions []conf
 			Match:  config.Match{TaskNameContains: []string{"Active"}},
 			Ensure: ruleActions,
 		}},
+	}
+}
+
+func writeEnsureConfig(t *testing.T, path, executable string, intervalSeconds int) {
+	t.Helper()
+	body := fmt.Sprintf("version: 2\ntask_source:\n  type: tcc2_mcp\n  executable: %s\n  args: [mcp]\npolling:\n  interval_seconds: %d\n  timeout_seconds: 20\nsafety:\n  dry_run: false\nrules:\n  - id: browser\n    match:\n      task_name_contains: [Active]\n    ensure:\n      - type: browser.block\n        domains: [example.com]\n      - type: app.stop\n        bundle_id: com.example.App\n", executable, intervalSeconds)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

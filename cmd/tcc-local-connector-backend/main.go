@@ -17,10 +17,8 @@ import (
 	"github.com/takets/tcc-local-connector/internal/config"
 	"github.com/takets/tcc-local-connector/internal/constants"
 	"github.com/takets/tcc-local-connector/internal/engine"
-	connectorlog "github.com/takets/tcc-local-connector/internal/logging"
 	"github.com/takets/tcc-local-connector/internal/protocol"
 	"github.com/takets/tcc-local-connector/internal/rules"
-	"github.com/takets/tcc-local-connector/internal/tcc2"
 )
 
 func main() {
@@ -78,9 +76,6 @@ func serve(options options) error {
 		os.Stdout,
 		log.New(os.Stderr, "tcc-local-connector-backend: ", log.LstdFlags),
 	)
-	server.ProbeTCC2 = func(ctx context.Context) (tcc2.ProbeResult, error) {
-		return tcc2.Probe(ctx, options.tcc2Executable)
-	}
 	logPath := engine.LogPath(options.configPath)
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 		return fmt.Errorf("create log directory: %w", err)
@@ -93,9 +88,8 @@ func serve(options options) error {
 	if err := logFile.Chmod(constants.StateFileMode); err != nil {
 		return fmt.Errorf("set log file permissions: %w", err)
 	}
-	structuredLogger := connectorlog.New(io.MultiWriter(os.Stderr, logFile), "info")
-	server.StructuredLogger = structuredLogger
-	backend := engine.New(engine.Deps{ConfigPath: options.configPath, Logger: structuredLogger})
+	backend := engine.New(engine.Deps{ConfigPath: options.configPath, LogWriter: io.MultiWriter(os.Stderr, logFile)})
+	server.StructuredLogger = backend.Logger()
 	backend.SetEventSink(server.Emit)
 	server.Engine = backend
 	go backend.Run(ctx)
@@ -106,11 +100,10 @@ func serve(options options) error {
 }
 
 type options struct {
-	command        string
-	tcc2Executable string
-	configPath     string
-	pauseUntil     time.Time
-	dryRun         bool
+	command    string
+	configPath string
+	pauseUntil time.Time
+	dryRun     bool
 }
 
 func parseOptions(args []string) (options, error) {
@@ -126,7 +119,6 @@ func parseOptions(args []string) (options, error) {
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	stdio := flags.Bool("stdio", false, "use standard input/output transport")
-	tcc2Executable := flags.String("tcc2-executable", "tcc2", "absolute path or command name for tcc2")
 	configPath := flags.String("config", "", "configuration file path")
 	duration := flags.Int("duration-seconds", 0, "pause duration in seconds")
 	apply := flags.Bool("apply", false, "allow side effects for run-once")
@@ -140,9 +132,6 @@ func parseOptions(args []string) (options, error) {
 	if command == "serve" && !*stdio {
 		return options{}, errors.New("--stdio is required")
 	}
-	if *tcc2Executable == "" {
-		return options{}, errors.New("--tcc2-executable must not be empty")
-	}
 	if command == "pause" && (*duration < 1 || *duration > 86400) {
 		return options{}, errors.New("--duration-seconds must be between 1 and 86400")
 	}
@@ -153,7 +142,7 @@ func parseOptions(args []string) (options, error) {
 		return options{}, errors.New("--apply and --dry-run cannot be used together")
 	}
 
-	return options{command: command, tcc2Executable: *tcc2Executable, configPath: *configPath, pauseUntil: time.Now().Add(time.Duration(*duration) * time.Second), dryRun: !*apply}, nil
+	return options{command: command, configPath: *configPath, pauseUntil: time.Now().Add(time.Duration(*duration) * time.Second), dryRun: !*apply}, nil
 }
 
 func testConfig(path string, output io.Writer) error {
@@ -177,7 +166,7 @@ func testConfig(path string, output io.Writer) error {
 
 func runOnce(path string, output io.Writer, dryRun bool) error {
 	backend := engine.New(engine.Deps{ConfigPath: path})
-	result := backend.Reload()
+	result := backend.LoadConfig()
 	if !result.OK {
 		return fmt.Errorf("configuration is invalid: %v", result.Errors)
 	}

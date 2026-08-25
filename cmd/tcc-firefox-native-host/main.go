@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -220,7 +221,7 @@ func validatePolicy(policy policyFile, now time.Time) error {
 	if !policy.Enforce && !policy.DryRun && (len(policy.Domains) != 0 || len(policy.PlannedDomains) != 0) {
 		return errors.New("disabled browser policy must be empty")
 	}
-	if policy.Enforce && !equalStrings(policy.Domains, policy.PlannedDomains) {
+	if policy.Enforce && !slices.Equal(policy.Domains, policy.PlannedDomains) {
 		return errors.New("enforced browser policy domains must equal planned_domains")
 	}
 	return nil
@@ -383,9 +384,16 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 	return nil
 }
 
+const rfc3339NanoUTCFixedFraction = "2006-01-02T15:04:05.000000000Z"
+
 func validateFreshTimestamp(value string, now time.Time) error {
 	updatedAt, err := time.Parse(time.RFC3339Nano, value)
-	if err != nil || updatedAt.Location() != time.UTC || updatedAt.Format(time.RFC3339Nano) != value {
+	if err != nil || updatedAt.Location() != time.UTC {
+		return errors.New("updated_at must be canonical RFC3339Nano UTC")
+	}
+	// Why: Swift writes a fixed nine-digit fraction (including trailing zeros).
+	// Go RFC3339Nano omits those zeros, so exact Format equality would fail-open live heartbeats.
+	if value != updatedAt.Format(time.RFC3339Nano) && value != updatedAt.Format(rfc3339NanoUTCFixedFraction) {
 		return errors.New("updated_at must be canonical RFC3339Nano UTC")
 	}
 	if updatedAt.After(now) || now.Sub(updatedAt) > time.Duration(constants.BrowserLivenessTTLSeconds)*time.Second {
@@ -431,19 +439,7 @@ func equalPolicyMessage(left, right policyMessage) bool {
 	if left.Type != right.Type || left.Version != right.Version || left.Generation != right.Generation || left.Enforce != right.Enforce || left.DryRun != right.DryRun {
 		return false
 	}
-	return equalStrings(left.Domains, right.Domains)
-}
-
-func equalStrings(left, right []string) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for index := range left {
-		if left[index] != right[index] {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(left.Domains, right.Domains)
 }
 
 func clonePolicyMessage(message policyMessage) policyMessage {

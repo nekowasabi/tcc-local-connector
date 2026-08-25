@@ -1,11 +1,11 @@
 package config
 
 import (
-	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -111,7 +111,7 @@ func validateDefaultActions(actions []Action, allowShell bool) []ValidationError
 	processIDs, conflicts, processConflicts := map[string]bool{}, map[string]string{}, map[string]string{}
 	for i := range actions {
 		action := &actions[i]
-		path := "default.on_task_start[" + strconvItoa(i) + "]"
+		path := "default.on_task_start[" + strconv.Itoa(i) + "]"
 		if action.Type == constants.BrowserBlockActionType {
 			errors = append(errors, validation(codeUnsupportedAction, path+".type"))
 			continue
@@ -139,7 +139,7 @@ func recordProcessConflict(conflicts map[string]string, verb, processID, path st
 
 func validateRule(rule *Rule, index int, allowShell bool, ruleIDs, processIDs map[string]bool, conflicts map[string]string) []ValidationError {
 	var errors []ValidationError
-	base := "rules[" + strconvItoa(index) + "]"
+	base := "rules[" + strconv.Itoa(index) + "]"
 	if rule.ID == "" {
 		errors = append(errors, validation(codeMissingRequiredField, base+".id"))
 	} else if !reRuleID.MatchString(rule.ID) {
@@ -164,7 +164,7 @@ func validateRule(rule *Rule, index int, allowShell bool, ruleIDs, processIDs ma
 	}
 	for group, actions := range map[string][]Action{"ensure": rule.Ensure, "on_enter": rule.OnEnter, "on_exit": rule.OnExit} {
 		for i := range actions {
-			errors = append(errors, validateAction(&actions[i], base+"."+group+"["+strconvItoa(i)+"]", group, allowShell, processIDs, conflicts, rule.Priority)...)
+			errors = append(errors, validateAction(&actions[i], base+"."+group+"["+strconv.Itoa(i)+"]", group, allowShell, processIDs, conflicts, rule.Priority)...)
 		}
 	}
 	return errors
@@ -262,7 +262,7 @@ func validateAction(action *Action, path, group string, allowShell bool, process
 }
 
 func recordAppConflict(conflicts map[string]string, priority int, verb, bundleID, path string, errors *[]ValidationError) {
-	key := strconvItoa(priority) + ":app:" + bundleID
+	key := strconv.Itoa(priority) + ":app:" + bundleID
 	if previous := conflicts[key]; previous != "" && previous != verb {
 		*errors = append(*errors, validation(codeRuleConflictSamePriority, path))
 	}
@@ -293,7 +293,7 @@ func validateAppStopIDs(action *Action, path string) ([]string, []ValidationErro
 	}
 	for i, id := range action.BundleIDs {
 		if !reBundleID.MatchString(id) {
-			errors = append(errors, validation(codeInvalidIdentifier, path+".bundle_ids["+strconvItoa(i)+"]"))
+			errors = append(errors, validation(codeInvalidIdentifier, path+".bundle_ids["+strconv.Itoa(i)+"]"))
 		}
 	}
 	if len(errors) > 0 {
@@ -322,7 +322,7 @@ func validateBrowserDomains(domains []string, path string) ([]string, []Validati
 	for i, domain := range domains {
 		value := strings.TrimSuffix(strings.ToLower(domain), ".")
 		if !validBrowserDomain(value) {
-			errors = append(errors, validation(codeInvalidBrowserDomain, path+"["+strconvItoa(i)+"]"))
+			errors = append(errors, validation(codeInvalidBrowserDomain, path+"["+strconv.Itoa(i)+"]"))
 			continue
 		}
 		normalized[i] = value
@@ -370,10 +370,6 @@ func oneOf(value string, allowed ...string) bool {
 	}
 	return false
 }
-func strconvItoa(value int) string {
-	return strings.TrimPrefix(strings.TrimSpace(fmt.Sprintf("%d", value)), "+")
-}
-
 func outOfRange(value, min, max int) bool {
 	return value < min || value > max
 }

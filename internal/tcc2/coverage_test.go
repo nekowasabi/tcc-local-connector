@@ -59,23 +59,6 @@ func TestProbeHelpersAndVersion(t *testing.T) {
 	if n, err := b.Write([]byte(payload)); err != nil || n != len(payload) || b.Len() != 4096 || len(b.String()) != 4096 {
 		t.Fatalf("buffer n=%d err=%v len=%d", n, err, b.Len())
 	}
-	if ResolveCLIVersion("/missing") != "" || ResolveAuthStatus(context.Background(), "/missing") {
-		t.Fatal("missing CLI accepted")
-	}
-	dir := t.TempDir()
-	real := filepath.Join(dir, "Cellar", "tcc2", "1.2.3", "bin", "tcc2")
-	if err := os.MkdirAll(filepath.Dir(real), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(real, []byte(""), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(real, filepath.Join(dir, "cli")); err != nil {
-		t.Fatal(err)
-	}
-	if got := ResolveCLIVersion(filepath.Join(dir, "cli")); got != "1.2.3" {
-		t.Fatalf("version=%q", got)
-	}
 }
 
 func TestReadResponseErrorsAndEOF(t *testing.T) {

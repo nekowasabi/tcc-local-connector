@@ -36,7 +36,7 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	command := exec.Command(binary, "serve", "--stdio", "--config", configPath, "--tcc2-executable", fake)
+	command := exec.Command(binary, "serve", "--stdio", "--config", configPath)
 	var stderr e2eLog
 	command.Stderr = &stderr
 	stdin, err := command.StdinPipe()

@@ -5,7 +5,10 @@
   "description": "Blocks task-defined domains while TCC Local Connector is active.",
   "browser_specific_settings": {
     "gecko": {
-      "id": "firefox-domain-blocker@tcc-local-connector.takets.jp"
+      "id": "firefox-domain-blocker@tcc-local-connector.takets.jp",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
     }
   },
   "permissions": [

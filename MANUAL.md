@@ -95,14 +95,14 @@ chmod 600 ~/.config/tcc-local-connector/config.yml
 2. ルールを 1 つずつ追加（まず `notify`）
 3. `app.start` / `app.stop` を追加して通常の挙動を確認
 4. `process.*` や `command.run` の追加を最後に実施
-5. 安定後にログイン時起動を有効化
+5. 安定してから本番運用する
 
 ## 6. 制約（運用上の既知制限）
 
 - 強制終了（SIGKILL 相当）は実行しません。終了は基本的に通常終了で行います。
 - ブラウザ URL への誘導、tmux / WSL / Windows 連携は対象外です。
 - 既定は 60 秒周期です。
-- ad-hoc 署名下では通知やログイン時起動登録が制約を受ける場合があります。
+- ad-hoc 署名下では通知が制約を受ける場合があります。
 
 ## 7. トラブルシューティング
 
@@ -131,7 +131,6 @@ chmod 600 ~/.config/tcc-local-connector/config.yml
 - [README.md](README.md): 概要と開発向けビルド情報
 - [docs/config-schema.md](docs/config-schema.md): 設定項目の完全仕様
 - [docs/protocol-v1.md](docs/protocol-v1.md): バックエンド通信仕様
-- [docs/macos-verification-2026-08-07.md](docs/macos-verification-2026-08-07.md): 実機検証結果
 ## 10. Firefox ESR での利用
 
 ### 10-1. 導入

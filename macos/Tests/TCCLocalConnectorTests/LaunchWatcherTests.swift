@@ -2,7 +2,7 @@ import AppKit
 import XCTest
 @testable import TCCLocalConnector
 
-final class AppStoreTests: XCTestCase {
+final class LaunchWatcherTests: XCTestCase {
     func testLaunchWatcher_ImmediateTerminateOnMatch() {
         let notificationCenter = FakeNotificationCenter()
         let launchedApp = FakeLaunchApplication(bundleIdentifier: "com.example.app")

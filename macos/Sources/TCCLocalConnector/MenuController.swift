@@ -84,7 +84,6 @@ final class MenuController: ObservableObject {
     }
 
     func reloadConfig() {
-        heartbeat.stop()
         send("reload_config")
     }
 
@@ -242,8 +241,9 @@ final class MenuController: ObservableObject {
 
     private func isHealthyStatus(_ payload: StatusPayload) -> Bool {
         switch payload.state {
-        case "active", "fetching": return payload.parseOK
-        case "degraded": return true
+        // Why: parse_ok false means a task_id snapshot was invalid, not that the
+        // backend stopped enforcing. Deleting the owner heartbeat would fail-open Firefox.
+        case "active", "fetching", "degraded": return true
         default: return false
         }
     }

@@ -1,19 +1,11 @@
 "use strict";
 
 const BrowserPolicyVersion = 1;
-const BrowserFailurePolicy = "fail_open";
-const BrowserLivenessTTLSeconds = 15;
-const NativeHostPollIntervalMilliseconds = 1000;
-const NativeMessageHeaderBytes = 4;
 const NativeMessageMaxPayloadBytes = 65536;
 const NativeReconnectInitialSeconds = 1;
 const NativeReconnectMaxSeconds = 30;
 const BrowserPolicyMaxDomains = 128;
-const BrowserPrivateWindowPolicy = "not_allowed";
-const BrowserOwnerHeartbeatFileName = "firefox-owner-heartbeat.json";
-const BrowserStateDirRelative = "TCCLocalConnector/BrowserPolicy";
 const FirefoxNativeHostName = "jp.takets.tcc_local_connector.firefox";
-const FirefoxExtensionID = "firefox-domain-blocker@tcc-local-connector.takets.jp";
 const BlockedPagePath = "blocked.html";
 
 function isIPv4(value) {
@@ -274,17 +266,9 @@ function createBackground(browserApi, timerApi = globalThis) {
 
 const exported = {
   BlockedPagePath,
-  BrowserFailurePolicy,
-  BrowserLivenessTTLSeconds,
-  BrowserOwnerHeartbeatFileName,
   BrowserPolicyMaxDomains,
   BrowserPolicyVersion,
-  BrowserPrivateWindowPolicy,
-  BrowserStateDirRelative,
-  FirefoxExtensionID,
   FirefoxNativeHostName,
-  NativeHostPollIntervalMilliseconds,
-  NativeMessageHeaderBytes,
   NativeMessageMaxPayloadBytes,
   NativeReconnectInitialSeconds,
   NativeReconnectMaxSeconds,

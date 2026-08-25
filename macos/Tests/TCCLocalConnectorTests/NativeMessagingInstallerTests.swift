@@ -3,7 +3,7 @@ import XCTest
 @testable import TCCLocalConnector
 
 final class NativeMessagingInstallerTests: XCTestCase {
-    func testCatalogSkipsUnconfiguredChromeAndInstallsFirefox() throws {
+    func testCatalogInstallsFirefox() throws {
         let env = try makeEnvironment()
         let report = NativeMessagingInstaller(
             applicationSupportURL: env.support,
@@ -13,7 +13,7 @@ final class NativeMessagingInstallerTests: XCTestCase {
         ).installPresentHosts()
 
         XCTAssertEqual(report.installed, ["firefox"])
-        XCTAssertEqual(report.skipped, ["chrome"])
+        XCTAssertEqual(report.skipped, [])
         XCTAssertEqual(report.failed, [])
 
         let manifest = try readManifest(env.support
@@ -25,8 +25,6 @@ final class NativeMessagingInstallerTests: XCTestCase {
             "firefox-domain-blocker@tcc-local-connector.takets.jp",
         ])
         XCTAssertNil(manifest["allowed_origins"])
-        XCTAssertFalse(FileManager.default.fileExists(atPath: env.support
-            .appendingPathComponent("Google/Chrome/NativeMessagingHosts/jp.takets.tcc_local_connector.chrome.json").path))
 
         let directoryPermissions = try XCTUnwrap(
             FileManager.default.attributesOfItem(
@@ -44,27 +42,6 @@ final class NativeMessagingInstallerTests: XCTestCase {
         XCTAssertEqual(filePermissions.intValue & 0o777, 0o600)
     }
 
-    func testConfiguredChromeWritesAllowedOriginsWhenHostExists() throws {
-        let env = try makeEnvironment()
-        var chrome = NativeMessagingCatalog.browsers.first { $0.id == "chrome" }!
-        chrome.allowedOrigins = ["chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef/"]
-        let report = NativeMessagingInstaller(
-            applicationSupportURL: env.support,
-            appBundleURL: env.app,
-            resourcesURL: env.resources,
-            browsers: [chrome]
-        ).installPresentHosts()
-
-        XCTAssertEqual(report, NativeMessagingInstallReport(installed: ["chrome"], skipped: [], failed: []))
-        let manifest = try readManifest(env.support
-            .appendingPathComponent("Google/Chrome/NativeMessagingHosts/jp.takets.tcc_local_connector.chrome.json"))
-        XCTAssertEqual(manifest["allowed_origins"] as? [String], [
-            "chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef/",
-        ])
-        XCTAssertNil(manifest["allowed_extensions"])
-        XCTAssertEqual(manifest["path"] as? String, env.host.path)
-    }
-
     func testMissingHostIsSkipped() throws {
         let env = try makeEnvironment()
         try FileManager.default.removeItem(at: env.host)
@@ -75,7 +52,7 @@ final class NativeMessagingInstallerTests: XCTestCase {
             browsers: NativeMessagingCatalog.browsers
         ).installPresentHosts()
         XCTAssertEqual(report.installed, [])
-        XCTAssertEqual(Set(report.skipped), Set(["firefox", "chrome"]))
+        XCTAssertEqual(report.skipped, ["firefox"])
         XCTAssertEqual(report.failed, [])
     }
 

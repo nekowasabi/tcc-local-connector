@@ -221,6 +221,20 @@ func TestHeartbeatStrictSchemaAndValidation(t *testing.T) {
 	}
 }
 
+func TestNineDigitHeartbeatTimestampStaysEnforced(t *testing.T) {
+	now := time.Date(2026, 8, 12, 10, 0, 0, 789000000, time.UTC)
+	nineDigit := now.UTC().Format(rfc3339NanoUTCFixedFraction)
+	if nineDigit == now.Format(time.RFC3339Nano) {
+		t.Fatal("fixture must differ from RFC3339Nano so trailing zeros are actually under test")
+	}
+	if err := validateFreshTimestamp(nineDigit, now); err != nil {
+		t.Fatalf("in-TTL nine-digit timestamp rejected: %v", err)
+	}
+	if err := validateFreshTimestamp("2026-08-12T10:00:00.1230Z", now); err == nil {
+		t.Fatal("non-canonical fractional timestamp was accepted")
+	}
+}
+
 func TestPolicyEffectiveFailOpen(t *testing.T) {
 	now := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
 	dir := t.TempDir()

@@ -124,16 +124,6 @@ func TestParseUserText_Golden(t *testing.T) {
 	}
 }
 
-func TestResolveCLIVersion_Homebrew(t *testing.T) {
-	TestProbeHelpersAndVersion(t)
-}
-
-func TestResolveCLIVersion_NonHomebrew(t *testing.T) {
-	if got := ResolveCLIVersion("/bin/echo"); got != "" {
-		t.Fatalf("expected empty version, got=%q", got)
-	}
-}
-
 func TestOpen_Success(t *testing.T) {
 	TestSessionOpenCallClose(t)
 }

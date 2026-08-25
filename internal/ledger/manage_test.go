@@ -2,7 +2,6 @@ package ledger
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -118,49 +117,6 @@ func TestManagerStop_MissingEntry(t *testing.T) {
 	}
 	if result.Status != "orphan_dropped" {
 		t.Fatalf("unexpected status=%q", result.Status)
-	}
-}
-
-func TestManagerReconcile_RemovesStaleEntries(t *testing.T) {
-	workDir := t.TempDir()
-	fake := filepath.Join(workDir, "ps")
-	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
-		t.Fatalf("write fake ps: %v", err)
-	}
-	oldPsPath := psPath
-	psPath = fake
-	t.Cleanup(func() { psPath = oldPsPath })
-
-	ledger := &Ledger{
-		Version: 1,
-		Entries: map[string]Entry{
-			"task": {ProcessID: "task", PID: 999999, PSLstart: "START", PSArgs: "ARGS"},
-		},
-		path: filepath.Join(workDir, "ledger.json"),
-	}
-	manager := NewManager(ledger)
-	removed, err := manager.Reconcile(context.Background())
-	if err != nil {
-		t.Fatalf("reconcile: %v", err)
-	}
-	if removed != 1 {
-		t.Fatalf("expected removed=1, got=%d", removed)
-	}
-	if _, ok := manager.Ledger.Get("task"); ok {
-		t.Fatalf("stale entry should be removed")
-	}
-	data, err := os.ReadFile(filepath.Join(workDir, "ledger.json"))
-	if err != nil {
-		t.Fatalf("read ledger file: %v", err)
-	}
-	var decoded struct {
-		Entries map[string]Entry `json:"entries"`
-	}
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("unmarshal saved ledger: %v", err)
-	}
-	if len(decoded.Entries) != 0 {
-		t.Fatalf("expected saved entries empty")
 	}
 }
 

@@ -17,7 +17,6 @@ import (
 
 	"github.com/takets/tcc-local-connector/internal/config"
 	"github.com/takets/tcc-local-connector/internal/engine"
-	"github.com/takets/tcc-local-connector/internal/tcc2"
 )
 
 func TestCapabilitiesMatchDocs(t *testing.T) {
@@ -27,12 +26,12 @@ func TestCapabilitiesMatchDocs(t *testing.T) {
 	}
 	var documented []string
 	for _, line := range strings.Split(string(doc), "\n") {
-		if strings.HasPrefix(line, "`health`") || strings.HasPrefix(line, "`health`,") {
+		if strings.HasPrefix(line, "`ready`") || strings.HasPrefix(line, "`ready`,") {
 			documented = strings.Split(strings.Trim(strings.TrimSpace(line), "`"), "`, `")
 		}
 	}
-	if len(documented) != 15 {
-		t.Fatalf("documented capabilities = %d, want 15", len(documented))
+	if len(documented) != 11 {
+		t.Fatalf("documented capabilities = %d, want 11", len(documented))
 	}
 }
 
@@ -161,74 +160,6 @@ func (h *harness) readJSON(t *testing.T, target any) {
 	if err := json.Unmarshal(h.output.Bytes(), target); err != nil {
 		t.Fatalf("invalid JSON output %q: %v", h.output.Text(), err)
 	}
-}
-
-func TestHealthAndEcho(t *testing.T) {
-	h := newHarness(t, nil)
-	defer h.close(t)
-
-	h.send(t, Request{Version: Version, ID: "health-1", Method: "health"})
-	health := h.readResponse(t)
-	if health.Error != nil || health.ID != "health-1" {
-		t.Fatalf("unexpected health response: %+v", health)
-	}
-
-	h.send(t, Request{
-		Version: Version,
-		ID:      "echo-1",
-		Method:  "echo",
-		Params:  json.RawMessage(`{"value":{"text":"こんにちは","number":42}}`),
-	})
-	echo := h.readResponse(t)
-	if echo.Error != nil || echo.ID != "echo-1" {
-		t.Fatalf("unexpected echo response: %+v", echo)
-	}
-}
-
-func TestHealth_Unchanged(t *testing.T) {
-	h := newHarness(t, nil)
-	defer h.close(t)
-
-	h.send(t, Request{Version: Version, ID: "health-only", Method: "health"})
-	got := h.readResponse(t)
-	if got.Error != nil || got.Result.(map[string]any)["status"] != "ok" {
-		t.Fatalf("unexpected health response: %+v", got)
-	}
-}
-
-func TestEcho_Unchanged(t *testing.T) {
-	h := newHarness(t, nil)
-	defer h.close(t)
-
-	h.send(t, Request{
-		Version: Version,
-		ID:      "echo-only",
-		Method:  "echo",
-		Params:  json.RawMessage(`{"value":{"text":"ok"}}`),
-	})
-	got := h.readResponse(t)
-	if got.Error != nil {
-		t.Fatalf("unexpected echo response: %+v", got)
-	}
-}
-
-func TestSleep_Unchanged(t *testing.T) {
-	h := newHarness(t, nil)
-	defer h.close(t)
-
-	h.send(t, Request{Version: Version, ID: "sleep-only", Method: "sleep", Params: json.RawMessage(`{"milliseconds":0}`)})
-	got := h.readResponse(t)
-	if got.Error != nil {
-		t.Fatalf("unexpected sleep response: %+v", got)
-	}
-}
-
-func TestCancel_Unchanged(t *testing.T) {
-	TestCancellation(t)
-}
-
-func TestTCC2Probe_Unchanged(t *testing.T) {
-	TestTCC2Probe(t)
 }
 
 func TestStatus_Unsupported_NoEngine(t *testing.T) {
@@ -543,23 +474,18 @@ func TestPlanEvent_EmptyOnReleaseOrPause(t *testing.T) {
 }
 
 func TestConcurrentRequestsCanCompleteOutOfOrder(t *testing.T) {
-	h := newHarness(t, nil)
+	fast := make(chan struct{})
+	slowReady := make(chan struct{})
+	eng := &gatedEngine{fast: fast, slowReady: slowReady}
+	h := newHarness(t, func(server *Server) { server.Engine = eng })
 	defer h.close(t)
 
-	h.send(t, Request{
-		Version: Version,
-		ID:      "slow",
-		Method:  "sleep",
-		Params:  json.RawMessage(`{"milliseconds":100}`),
-	})
-	h.send(t, Request{
-		Version: Version,
-		ID:      "fast",
-		Method:  "sleep",
-		Params:  json.RawMessage(`{"milliseconds":1}`),
-	})
+	h.send(t, Request{Version: Version, ID: "slow", Method: "refresh_now"})
+	<-slowReady
+	h.send(t, Request{Version: Version, ID: "fast", Method: "status"})
 
 	first := h.readResponse(t)
+	close(fast)
 	second := h.readResponse(t)
 	if first.ID != "fast" || second.ID != "slow" {
 		t.Fatalf("unexpected response order: first=%q second=%q", first.ID, second.ID)
@@ -570,7 +496,7 @@ func TestReadyCapabilities(t *testing.T) {
 	capabilities, h := newHarnessWithReadyCapabilities(t, nil)
 	defer h.close(t)
 
-	want := []string{"health", "echo", "sleep", "cancel", "tcc2_probe", "status", "reload_config", "pause", "resume", "refresh_now", "config_paths", "report_actions", "event.plan", "event.state_changed", "event.notify"}
+	want := []string{"ready", "status", "reload_config", "pause", "resume", "refresh_now", "config_paths", "report_actions", "event.plan", "event.state_changed", "event.notify"}
 	if len(capabilities) != len(want) {
 		t.Fatalf("expected %d capabilities, got %d", len(want), len(capabilities))
 	}
@@ -581,45 +507,15 @@ func TestReadyCapabilities(t *testing.T) {
 	}
 }
 
-func TestCancellation(t *testing.T) {
-	h := newHarness(t, nil)
-	defer h.close(t)
-
-	h.send(t, Request{
-		Version: Version,
-		ID:      "sleep-1",
-		Method:  "sleep",
-		Params:  json.RawMessage(`{"milliseconds":5000}`),
-	})
-	h.send(t, Request{
-		Version: Version,
-		ID:      "cancel-1",
-		Method:  "cancel",
-		Params:  json.RawMessage(`{"id":"sleep-1"}`),
-	})
-
-	responses := map[string]Response{}
-	for range 2 {
-		response := h.readResponse(t)
-		responses[response.ID] = response
-	}
-	if responses["cancel-1"].Error != nil {
-		t.Fatalf("cancel request failed: %+v", responses["cancel-1"])
-	}
-	if got := responses["sleep-1"].Error; got == nil || got.Code != "cancelled" {
-		t.Fatalf("sleep request was not cancelled: %+v", responses["sleep-1"])
-	}
-}
-
 func TestDuplicateActiveIDIsRejected(t *testing.T) {
-	h := newHarness(t, nil)
+	eng := &blockingEngine{}
+	h := newHarness(t, func(server *Server) { server.Engine = eng })
 	defer h.close(t)
 
 	request := Request{
 		Version: Version,
 		ID:      "duplicate",
-		Method:  "sleep",
-		Params:  json.RawMessage(`{"milliseconds":50}`),
+		Method:  "refresh_now",
 	}
 	h.send(t, request)
 	h.send(t, request)
@@ -646,16 +542,16 @@ func TestInvalidInputAndRecovery(t *testing.T) {
 		t.Fatalf("unexpected invalid JSON response: %+v", invalid)
 	}
 
-	h.send(t, Request{Version: Version + 1, ID: "version-1", Method: "health"})
+	h.send(t, Request{Version: Version + 1, ID: "version-1", Method: "status"})
 	version := h.readResponse(t)
 	if version.Error == nil || version.Error.Code != "unsupported_version" {
 		t.Fatalf("unexpected version response: %+v", version)
 	}
 
-	h.send(t, Request{Version: Version, ID: "health-after-error", Method: "health"})
-	health := h.readResponse(t)
-	if health.Error != nil || health.ID != "health-after-error" {
-		t.Fatalf("server did not recover after invalid input: %+v", health)
+	h.send(t, Request{Version: Version, ID: "status-after-error", Method: "status"})
+	got := h.readResponse(t)
+	if got.Error == nil || got.Error.Code != "unsupported" || got.ID != "status-after-error" {
+		t.Fatalf("server did not recover after invalid input: %+v", got)
 	}
 }
 
@@ -671,53 +567,32 @@ func TestOversizedMessageAndRecovery(t *testing.T) {
 		t.Fatalf("unexpected oversized response: %+v", oversized)
 	}
 
-	h.send(t, Request{Version: Version, ID: "health-after-large", Method: "health"})
-	health := h.readResponse(t)
-	if health.Error != nil || health.ID != "health-after-large" {
-		t.Fatalf("server did not recover after oversized input: %+v", health)
+	h.send(t, Request{Version: Version, ID: "status-after-large", Method: "status"})
+	got := h.readResponse(t)
+	if got.Error == nil || got.Error.Code != "unsupported" || got.ID != "status-after-large" {
+		t.Fatalf("server did not recover after oversized input: %+v", got)
 	}
 }
 
 func TestMessageLargerThanReaderBufferIsAccepted(t *testing.T) {
-	h := newHarness(t, nil)
+	eng := &fakeEngine{snapshot: engine.Status{State: "active"}}
+	h := newHarness(t, func(server *Server) { server.Engine = eng })
 	defer h.close(t)
 
 	value := strings.Repeat("x", 8*1024)
-	params, err := json.Marshal(map[string]string{"value": value})
+	params, err := json.Marshal(map[string]string{"pad": value})
 	if err != nil {
 		t.Fatal(err)
 	}
 	h.send(t, Request{
 		Version: Version,
 		ID:      "large-valid",
-		Method:  "echo",
+		Method:  "status",
 		Params:  params,
 	})
 
 	response := h.readResponse(t)
 	if response.Error != nil || response.ID != "large-valid" {
-		t.Fatalf("unexpected response: %+v", response)
-	}
-}
-
-func TestTCC2Probe(t *testing.T) {
-	h := newHarness(t, func(server *Server) {
-		server.ProbeTCC2 = func(context.Context) (tcc2.ProbeResult, error) {
-			return tcc2.ProbeResult{
-				ServerName:       "taskchute-cloud-2",
-				ServerVersion:    "1.0.0",
-				ToolCount:        28,
-				HasGetTaskChute:  true,
-				ProtocolVersion:  "2025-06-18",
-				ProcessExitClean: true,
-			}, nil
-		}
-	})
-	defer h.close(t)
-
-	h.send(t, Request{Version: Version, ID: "tcc2-1", Method: "tcc2_probe"})
-	response := h.readResponse(t)
-	if response.Error != nil || response.ID != "tcc2-1" {
 		t.Fatalf("unexpected response: %+v", response)
 	}
 }
@@ -752,7 +627,7 @@ func TestContextCancellationStopsBlockedReader(t *testing.T) {
 
 func TestEOFWithoutTrailingNewlineIsProcessed(t *testing.T) {
 	var input bytes.Buffer
-	request := Request{Version: Version, ID: "health-1", Method: "health"}
+	request := Request{Version: Version, ID: "status-1", Method: "status"}
 	payload, err := json.Marshal(request)
 	if err != nil {
 		t.Fatal(err)
@@ -771,13 +646,13 @@ func TestEOFWithoutTrailingNewlineIsProcessed(t *testing.T) {
 		responses = append(responses, append(json.RawMessage(nil), scanner.Bytes()...))
 	}
 	if len(responses) != 2 {
-		t.Fatalf("expected ready and health response, got %d", len(responses))
+		t.Fatalf("expected ready and status response, got %d", len(responses))
 	}
 	var response Response
 	if err := json.Unmarshal(responses[1], &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.ID != "health-1" || response.Error != nil {
+	if response.ID != "status-1" || response.Error == nil || response.Error.Code != "unsupported" {
 		t.Fatalf("unexpected response: %+v", response)
 	}
 }
@@ -785,9 +660,8 @@ func TestEOFWithoutTrailingNewlineIsProcessed(t *testing.T) {
 func TestEOFStopsActiveRequest(t *testing.T) {
 	request := Request{
 		Version: Version,
-		ID:      "sleep-1",
-		Method:  "sleep",
-		Params:  json.RawMessage(`{"milliseconds":5000}`),
+		ID:      "refresh-1",
+		Method:  "refresh_now",
 	}
 	payload, err := json.Marshal(request)
 	if err != nil {
@@ -796,6 +670,7 @@ func TestEOFStopsActiveRequest(t *testing.T) {
 	input := bytes.NewBuffer(append(payload, '\n'))
 	var output lockedBuffer
 	server := NewServer(input, &output, nil)
+	server.Engine = &blockingEngine{}
 
 	start := time.Now()
 	done := make(chan error, 1)
@@ -1082,15 +957,16 @@ func TestReportActions(t *testing.T) {
 }
 
 func TestManyConcurrentRequests(t *testing.T) {
-	h := newHarness(t, nil)
+	eng := &fakeEngine{snapshot: engine.Status{State: "active"}}
+	h := newHarness(t, func(server *Server) { server.Engine = eng })
 	defer h.close(t)
 
 	const count = 250
 	for i := range count {
 		h.send(t, Request{
 			Version: Version,
-			ID:      fmt.Sprintf("health-%03d", i),
-			Method:  "health",
+			ID:      fmt.Sprintf("status-%03d", i),
+			Method:  "status",
 		})
 	}
 
@@ -1197,4 +1073,28 @@ func (f *fakeEngine) Paths() map[string]string {
 		return f.paths
 	}
 	return map[string]string{}
+}
+
+type blockingEngine struct{ fakeEngine }
+
+func (e *blockingEngine) RunCycleNow(ctx context.Context) (int64, error) {
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case <-time.After(50 * time.Millisecond):
+		return 1, nil
+	}
+}
+
+type gatedEngine struct {
+	fakeEngine
+	fast      chan struct{}
+	slowReady chan struct{}
+	once      sync.Once
+}
+
+func (e *gatedEngine) RunCycleNow(context.Context) (int64, error) {
+	e.once.Do(func() { close(e.slowReady) })
+	<-e.fast
+	return 1, nil
 }

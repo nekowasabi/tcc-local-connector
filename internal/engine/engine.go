@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,6 +29,7 @@ type Deps struct {
 	ConfigPath         string
 	Emit               func(string, any)
 	Logger             *logging.Logger
+	LogWriter          io.Writer
 	BrowserPolicyPath  string
 	BrowserPolicyStore interface {
 		Publish(bool, bool, []string, []string) (browserpolicy.Policy, error)
@@ -82,11 +84,12 @@ func New(deps Deps) *Engine {
 		path, _ = config.DefaultPath()
 	}
 	stateDir := defaultStateDir(path)
+	level, retainDays := LoggingFromConfig(path)
 	logger := deps.Logger
 	if logger == nil {
-		logger = logging.New(nil, constants.DefaultLogLevel)
+		logger = logging.New(deps.LogWriter, level)
 	}
-	logger.Rotate(stateDir, constants.DefaultLogRetainDays, time.Now())
+	logger.Rotate(stateDir, retainDays, time.Now())
 	engine := &Engine{configPath: path, machine: state.NewMachine(), status: Status{State: state.StateStarting, RunningTasks: []TaskView{}}, pausePath: filepath.Join(stateDir, constants.PauseFileName), emit: deps.Emit, logger: logger, taskIDs: map[string]struct{}{}}
 	engine.policyPath = deps.BrowserPolicyPath
 	if engine.policyPath == "" {
@@ -108,6 +111,26 @@ func New(deps Deps) *Engine {
 		}
 	}
 	return engine
+}
+
+func LoggingFromConfig(path string) (level string, retainDays int) {
+	level = constants.DefaultLogLevel
+	retainDays = constants.DefaultLogRetainDays
+	cfg, _, err := config.Load(path)
+	if err != nil || cfg == nil {
+		return
+	}
+	if cfg.Logging.Level != "" {
+		level = cfg.Logging.Level
+	}
+	if cfg.Logging.RetainDays > 0 {
+		retainDays = cfg.Logging.RetainDays
+	}
+	return
+}
+
+func (e *Engine) Logger() *logging.Logger {
+	return e.logger
 }
 func defaultStateDir(configPath string) string {
 	home, err := os.UserHomeDir()
@@ -159,6 +182,12 @@ func (e *Engine) Run(ctx context.Context) {
 	}
 }
 
+// Why: Reload and resume published empty policy and then waited for the poll timer,
+// so matching ensure controls stayed released for a full interval_seconds.
+func (e *Engine) cycleNow() {
+	_, _ = e.RunCycleNow(context.Background())
+}
+
 func (e *Engine) pollInterval() time.Duration {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -195,6 +224,14 @@ func (e *Engine) SetDryRun(dryRun bool) error {
 }
 
 func (e *Engine) Reload() ReloadResult {
+	result := e.LoadConfig()
+	if result.OK {
+		e.cycleNow()
+	}
+	return result
+}
+
+func (e *Engine) LoadConfig() ReloadResult {
 	cfg, errs, err := config.Load(e.configPath)
 	e.mu.Lock()
 	if err != nil {
@@ -406,10 +443,6 @@ func publicPlan(plan rules.Plan) rules.Plan {
 	return plan
 }
 
-func (e *Engine) executeBackendActions(ctx context.Context, actions []rules.PlannedAction, dryRun, allowShell bool) []ActionResult {
-	return e.executeBackendActionsForCycle(ctx, 0, actions, dryRun, allowShell)
-}
-
 func (e *Engine) executeBackendActionsForCycle(ctx context.Context, cycleID int64, actions []rules.PlannedAction, dryRun, allowShell bool) []ActionResult {
 	results := make([]ActionResult, 0, len(actions))
 	for _, action := range actions {
@@ -578,6 +611,7 @@ func (e *Engine) Resume() error {
 	e.mu.Unlock()
 	policyErr := e.publishEmptyBrowserPolicy()
 	go e.emitEvent("state_changed", current)
+	e.cycleNow()
 	return policyErr
 }
 func (e *Engine) ReportActions(cycleID int64, results []ActionResult) (int, int) {

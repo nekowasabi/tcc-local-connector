@@ -35,8 +35,6 @@ func NewStore(path string) *Store {
 	return store
 }
 
-func (s *Store) Path() string { return s.path }
-
 func (s *Store) Publish(enforce, dryRun bool, domains, plannedDomains []string) (Policy, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

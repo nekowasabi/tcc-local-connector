@@ -25,14 +25,12 @@ func TestParseOptions(t *testing.T) {
 	options, err := parseOptions([]string{
 		"serve",
 		"--stdio",
-		"--tcc2-executable",
-		"/home/linuxbrew/.linuxbrew/bin/tcc2",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if options.tcc2Executable != "/home/linuxbrew/.linuxbrew/bin/tcc2" {
-		t.Fatalf("unexpected executable: %q", options.tcc2Executable)
+	if options.command != "serve" {
+		t.Fatalf("unexpected command: %q", options.command)
 	}
 }
 
@@ -128,7 +126,7 @@ func TestRunRejectsInvalidArguments(t *testing.T) {
 	for _, args := range [][]string{
 		{},
 		{"unknown"},
-		{"serve", "--stdio", "--tcc2-executable", ""},
+		{"serve"},
 		{"pause"},
 		{"pause", "--duration-seconds", "86401"},
 		{"status", "--dry-run"},
@@ -184,8 +182,6 @@ func TestParseOptionsAcceptsConfigPath(t *testing.T) {
 		"--stdio",
 		"--config",
 		"/tmp/custom-config.yml",
-		"--tcc2-executable",
-		"/home/linuxbrew/.linuxbrew/bin/tcc2",
 	})
 	if err != nil {
 		t.Fatal(err)

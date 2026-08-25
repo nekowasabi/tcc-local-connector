@@ -1,45 +1,18 @@
 import Foundation
-import Darwin
-
-public protocol BackendClientDelegate: Sendable {
-    func backendStateChanged(_ state: BackendState) async
-}
-
-public struct RestartPolicy: Sendable {
-    public private(set) var attempts = 0
-
-    public init() {}
-
-    public mutating func nextDelay() -> Int? {
-        guard attempts < Constants.backendRestartMaxAttempts else { return nil }
-        let delay = min(
-            Constants.backendRestartBaseDelaySeconds * Int(pow(Double(Constants.backendRestartDelayFactor), Double(attempts))),
-            Constants.backendRestartMaxDelaySeconds
-        )
-        attempts += 1
-        return delay
-    }
-}
 
 public actor BackendClient {
     public private(set) var state: BackendState = .terminated
-    private var policy = RestartPolicy()
 	private var process: Process?
 	private var input: Pipe?
     private var stdout: Pipe?
-	private var stderr: Pipe?
+    private var stderr: Pipe?
     private var framer = LineFramer()
     public private(set) var plans: [PlanPayload] = []
     public private(set) var notifications: [NotifyPayload] = []
     public private(set) var responses: [BackendResponse] = []
-    public private(set) var diagnostics: [String] = []
 	private var nextRequestSequence = 0
 
     public init() {}
-
-    public func start() {
-        state = .starting
-    }
 
 	public func launch(executableURL: URL, arguments: [String]) throws {
 		shutdown()
@@ -111,10 +84,7 @@ public actor BackendClient {
     }
 
     public func consumeStderr(_ data: Data) {
-        let message = String(decoding: data, as: UTF8.self)
-        guard !message.isEmpty else { return }
-        diagnostics.append(message)
-        if diagnostics.count > Constants.notifierRecentCapacity { diagnostics.removeFirst() }
+        _ = String(decoding: data, as: UTF8.self)
     }
 
     private func handle(_ event: BackendEvent) {
@@ -142,17 +112,6 @@ public actor BackendClient {
             return
         }
         state = .running
-        policy = RestartPolicy()
-    }
-
-    public func nextRestartDelay() -> Int? {
-        guard state != .backendIncompatible else { return nil }
-        state = .backendDown
-        guard let delay = policy.nextDelay() else {
-            state = .backendDownPermanent
-            return nil
-        }
-        return delay
     }
 
 	public func shutdown() {
@@ -167,10 +126,5 @@ public actor BackendClient {
 		}
 		process = nil
         state = .terminated
-    }
-
-    // Why: The backend child is owned by this connector, so escalation is allowed for the child only.
-    public func hardKill(_ process: Process) {
-        _ = kill(process.processIdentifier, SIGKILL)
     }
 }

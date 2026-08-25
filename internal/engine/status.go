@@ -14,16 +14,3 @@ type TaskView struct {
 	TaskID string `json:"task_id"`
 	Date   string `json:"date"`
 }
-type TCC2Info struct {
-	Version string `json:"version"`
-}
-type ConfigInfo struct {
-	Path string `json:"path"`
-}
-type UserView struct {
-	Timezone string `json:"timezone"`
-}
-type ManagedProcessView struct {
-	ProcessID string `json:"process_id"`
-	PID       int    `json:"pid"`
-}

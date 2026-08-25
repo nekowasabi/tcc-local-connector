@@ -82,20 +82,3 @@ func (m *Manager) Stop(ctx context.Context, id string, grace time.Duration, dryR
 	m.Ledger.Remove(id)
 	return StopResult{Status: "stopped", SignalsSent: 1}, m.Ledger.Save()
 }
-func (m *Manager) Reconcile(ctx context.Context) (int, error) {
-	removed := 0
-	for _, entry := range m.Ledger.All() {
-		live, err := VerifyEntry(ctx, entry)
-		if err != nil {
-			return removed, err
-		}
-		if !live {
-			m.Ledger.Remove(entry.ProcessID)
-			removed++
-		}
-	}
-	if removed > 0 {
-		return removed, m.Ledger.Save()
-	}
-	return removed, nil
-}

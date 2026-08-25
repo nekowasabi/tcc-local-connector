@@ -104,6 +104,44 @@ final class BrowserPolicyHeartbeatTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: heartbeat.heartbeatURL.path))
     }
 
+    func testReloadKeepsHeartbeatAndPauseDeletesIt() async throws {
+        let root = try makeTemporaryDirectory()
+        let heartbeat = BrowserPolicyHeartbeat(applicationSupportURL: root)
+        let backend = HeartbeatMenuBackend()
+        let controller = MenuController(
+            backend: backend,
+            system: HeartbeatMenuSystem(),
+            heartbeat: heartbeat
+        )
+        await backend.enqueueResponse(try healthyStatusResponse())
+        await controller.processPendingMessagesForTesting()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: heartbeat.heartbeatURL.path))
+
+        controller.perform(.reloadConfig)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: heartbeat.heartbeatURL.path))
+
+        controller.perform(.pause(900))
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: heartbeat.heartbeatURL.path))
+    }
+
+    func testActiveStatusWithParseOKFalseKeepsHeartbeat() async throws {
+        let root = try makeTemporaryDirectory()
+        let heartbeat = BrowserPolicyHeartbeat(applicationSupportURL: root)
+        let backend = HeartbeatMenuBackend()
+        let controller = MenuController(
+            backend: backend,
+            system: HeartbeatMenuSystem(),
+            heartbeat: heartbeat
+        )
+        await backend.enqueueResponse(try response(
+            #"{"version":1,"id":"status","result":{"state":"active","cycle_id":7,"parse_ok":false,"running_tasks":[],"last_error":"missing"}}"#
+        ))
+        await controller.processPendingMessagesForTesting()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: heartbeat.heartbeatURL.path))
+    }
+
     func testPausedStatusAndRPCErrorDeleteHeartbeat() async throws {
         let root = try makeTemporaryDirectory()
         let heartbeat = BrowserPolicyHeartbeat(applicationSupportURL: root)

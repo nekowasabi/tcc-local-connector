@@ -71,4 +71,3 @@ public struct StatusPayload: Codable, Sendable {
     }
 }
 public struct NotifyPayload: Codable, Sendable { public let level: String; public let code: String; public let title: String; public let message: String; public let at: Date? }
-public struct StateChangedPayload: Codable, Sendable { public let state: String; public let cycleID: Int64; enum CodingKeys: String, CodingKey { case state; case cycleID = "cycle_id" } }

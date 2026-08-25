@@ -64,13 +64,6 @@ TaskChute Cloud 2 の実行中タスクを取得し、設定したルールに�
 - 右クリックで開く
 - またはシステム設定から `開発元を確認できません` を許可
 
-## ログイン時起動の有効化
-
-1. メニューから設定画面を開く
-2. ログイン時起動を有効化
-3. 設定が ON になっていることを確認
-4. ad-hoc 署名下では登録失敗する場合があるため、失敗時はメニュー上のステータス表示を確認
-
 ## 段階投入の推奨手順
 
 1. `dry_run: true`、`rules: []` で 2〜3 日運用し、影響範囲を観測
@@ -78,7 +71,6 @@ TaskChute Cloud 2 の実行中タスクを取得し、設定したルールに�
 3. `dry_run: false` かつ `notify` / `app.start` のみ有効化
 4. `app.stop` を追加してアプリ停止まで許可
 5. `process.start` / `command.run` を追加
-6. 最後にログイン時起動を有効化
 
 ## 既知の制約
 
@@ -97,7 +89,7 @@ TaskChute Cloud 2 の実行中タスクを取得し、設定したルールに�
 3. タスクが取れない: `tcc2 status` / `tcc2 login` / 取得ログを確認
 4. バックエンド再起動: stderr を確認し、版不一致なら同一タグで再起動
 5. 通知が出ない: メニューの最終取得時刻と `notify` 動作を確認
-6. 完全に戻す: ログイン時起動 OFF、Quit、設定と状態ファイルの確認
+6. 完全に戻す: Quit、設定と状態ファイルの確認
 
 ## ポーリング間隔
 
@@ -112,7 +104,7 @@ TaskChute Cloud 2 の実行中タスクを取得し、設定したルールに�
 - 台帳: `~/.local/state/tcc-local-connector/managed-processes.json`
 ## Firefox ESR 拡張の導入
 
-Firefox ESR を導入してから、アプリをビルドし、一時拡張を読み込みます。Native Messaging Host は `make dev` / `scripts/make-app-bundle.sh` とアプリ起動時に自動登録します。ブラウザを増やすときは `NativeMessagingCatalog` にエントリを足します（Chrome は `allowedOrigins` を埋めた時点で有効）。
+Firefox ESR を導入してから、アプリをビルドし、一時拡張を読み込みます。Native Messaging Host は `make dev` / `scripts/make-app-bundle.sh` とアプリ起動時に自動登録します。対象ブラウザは Firefox のみです。
 
 ```bash
 make dev

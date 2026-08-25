@@ -45,7 +45,7 @@ check_eq() {
 }
 
 # D-01 .. D-15
-check_count "D-01" "rg -n 'forceTerminate\\(|SIGKILL|signal\\.SIGKILL|syscall\\.SIGKILL|kill -9' internal cmd macos/Sources scripts --glob '!forbidden-audit.sh'" "1"
+check_count "D-01" "rg -n 'forceTerminate\\(|SIGKILL|signal\\.SIGKILL|syscall\\.SIGKILL|kill -9' internal cmd macos/Sources scripts --glob '!forbidden-audit.sh'" "0"
 check_count "D-02" "rg -n '\\bpkill\\b|\\bkillall\\b|runningApplications\\(\\)' internal cmd macos/Sources" "0"
 check_count "D-03" "rg -n '\"/bin/sh\"|\"-c\"|bash -c|zsh -c|sh -c' internal cmd" "1"
 # CLI exposes config, status, and serve output through explicit stdout sinks.

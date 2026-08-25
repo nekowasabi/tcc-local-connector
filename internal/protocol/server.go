@@ -15,7 +15,6 @@ import (
 	"github.com/takets/tcc-local-connector/internal/constants"
 	"github.com/takets/tcc-local-connector/internal/engine"
 	"github.com/takets/tcc-local-connector/internal/logging"
-	"github.com/takets/tcc-local-connector/internal/tcc2"
 )
 
 const (
@@ -60,14 +59,6 @@ type readyData struct {
 	Capabilities    []Capability `json:"capabilities"`
 }
 
-type echoParams struct {
-	Value json.RawMessage `json:"value"`
-}
-
-type sleepParams struct {
-	Milliseconds int `json:"milliseconds"`
-}
-
 type Server struct {
 	In               io.Reader
 	Out              io.Writer
@@ -75,7 +66,6 @@ type Server struct {
 	StructuredLogger *logging.Logger
 	MaxMessage       int
 	DrainTimeout     time.Duration
-	ProbeTCC2        func(context.Context) (tcc2.ProbeResult, error)
 	Engine           EngineAPI
 
 	writeMu sync.Mutex
@@ -109,10 +99,7 @@ func NewServer(in io.Reader, out io.Writer, logger *log.Logger) *Server {
 		StructuredLogger: logging.New(nil, constants.DefaultLogLevel),
 		MaxMessage:       DefaultMaxMessage,
 		DrainTimeout:     DefaultDrainTimeout,
-		ProbeTCC2: func(ctx context.Context) (tcc2.ProbeResult, error) {
-			return tcc2.Probe(ctx, "tcc2")
-		},
-		tasks: make(map[string]context.CancelFunc),
+		tasks:            make(map[string]context.CancelFunc),
 	}
 }
 
@@ -123,11 +110,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		Data: readyData{
 			ProtocolVersion: Version,
 			Capabilities: []Capability{
-				{Name: "health"},
-				{Name: "echo"},
-				{Name: "sleep"},
-				{Name: "cancel"},
-				{Name: "tcc2_probe"},
+				{Name: "ready"},
 				{Name: "status"}, {Name: "reload_config"}, {Name: "pause"}, {Name: "resume"}, {Name: "refresh_now"}, {Name: "config_paths"}, {Name: "report_actions"}, {Name: "event.plan"}, {Name: "event.state_changed"}, {Name: "event.notify"},
 			},
 		},
@@ -218,10 +201,6 @@ func (s *Server) dispatch(parent context.Context, request Request) error {
 	if request.Method == "" {
 		return s.writeError(request.ID, "invalid_request", "method is required")
 	}
-	if request.Method == "cancel" {
-		return s.cancel(request)
-	}
-
 	ctx, cancel := context.WithCancel(parent)
 	if !s.addTask(request.ID, cancel) {
 		cancel()
@@ -253,49 +232,6 @@ func (s *Server) dispatch(parent context.Context, request Request) error {
 func (s *Server) handle(ctx context.Context, request Request) (any, *RPCError) {
 	s.StructuredLogger.Log(logging.Entry{Level: "info", Component: "protocol", Event: "rpc_request", Message: request.Method})
 	switch request.Method {
-	case "health":
-		return map[string]string{"status": "ok"}, nil
-	case "echo":
-		var params echoParams
-		if len(request.Params) == 0 {
-			return nil, &RPCError{Code: "invalid_params", Message: "params.value is required"}
-		}
-		if err := json.Unmarshal(request.Params, &params); err != nil || len(params.Value) == 0 {
-			return nil, &RPCError{Code: "invalid_params", Message: "params.value is required"}
-		}
-		return map[string]json.RawMessage{"value": params.Value}, nil
-	case "sleep":
-		var params sleepParams
-		if err := json.Unmarshal(request.Params, &params); err != nil {
-			return nil, &RPCError{Code: "invalid_params", Message: "milliseconds must be an integer"}
-		}
-		if params.Milliseconds < 0 || params.Milliseconds > 30_000 {
-			return nil, &RPCError{Code: "invalid_params", Message: "milliseconds must be between 0 and 30000"}
-		}
-		timer := time.NewTimer(time.Duration(params.Milliseconds) * time.Millisecond)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			return nil, &RPCError{Code: "cancelled", Message: "request was cancelled"}
-		case <-timer.C:
-			return map[string]bool{"completed": true}, nil
-		}
-	case "tcc2_probe":
-		if s.ProbeTCC2 == nil {
-			return nil, &RPCError{Code: "unsupported", Message: "tcc2 probe is not configured"}
-		}
-		result, err := s.ProbeTCC2(ctx)
-		if err != nil {
-			switch {
-			case errors.Is(err, context.Canceled):
-				return nil, &RPCError{Code: "cancelled", Message: "request was cancelled"}
-			case errors.Is(err, context.DeadlineExceeded):
-				return nil, &RPCError{Code: "timeout", Message: "tcc2 probe timed out"}
-			default:
-				return nil, &RPCError{Code: "tcc2_error", Message: err.Error()}
-			}
-		}
-		return result, nil
 	case "status":
 		if s.Engine == nil {
 			return nil, &RPCError{Code: "unsupported", Message: "engine is not configured"}
@@ -383,36 +319,6 @@ func (s *Server) handle(ctx context.Context, request Request) (any, *RPCError) {
 	default:
 		return nil, &RPCError{Code: "method_not_found", Message: "unknown method"}
 	}
-}
-
-func (s *Server) cancel(request Request) error {
-	var params struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(request.Params, &params); err != nil || params.ID == "" {
-		return s.writeError(request.ID, "invalid_params", "params.id is required")
-	}
-	if params.ID == request.ID {
-		return s.writeError(request.ID, "duplicate_id", "cancel request id must differ from target id")
-	}
-
-	s.taskMu.Lock()
-	_, requestIDExists := s.tasks[request.ID]
-	cancel, ok := s.tasks[params.ID]
-	s.taskMu.Unlock()
-	if requestIDExists {
-		return s.writeError(request.ID, "duplicate_id", "request id is already active")
-	}
-	if !ok {
-		return s.writeError(request.ID, "not_found", "active request was not found")
-	}
-
-	cancel()
-	return s.write(Response{
-		Version: Version,
-		ID:      request.ID,
-		Result:  map[string]string{"cancelled_id": params.ID},
-	})
 }
 
 func (s *Server) addTask(id string, cancel context.CancelFunc) bool {
