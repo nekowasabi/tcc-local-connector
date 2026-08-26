@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -360,7 +361,14 @@ func executable(path string) bool {
 		return false
 	}
 	info, err := os.Stat(path)
-	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
+	if err != nil || info.IsDir() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		// Why: Windows file modes rarely carry Unix execute bits.
+		return true
+	}
+	return info.Mode()&0o111 != 0
 }
 func oneOf(value string, allowed ...string) bool {
 	for _, v := range allowed {
