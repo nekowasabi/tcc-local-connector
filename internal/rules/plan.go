@@ -38,14 +38,18 @@ type Conflict struct {
 }
 
 func BuildPlan(cycleID int64, previous, current Evaluation) (Plan, []Conflict) {
-	return buildPlan(cycleID, nil, previous, current)
+	return buildPlan(cycleID, nil, nil, previous, current)
 }
 
 func BuildPlanWithDefault(cycleID int64, defaultActions []config.Action, previous, current Evaluation) (Plan, []Conflict) {
-	return buildPlan(cycleID, defaultActions, previous, current)
+	return buildPlan(cycleID, defaultActions, nil, previous, current)
 }
 
-func buildPlan(cycleID int64, defaultActions []config.Action, previous, current Evaluation) (Plan, []Conflict) {
+func BuildPlanWithLifecycle(cycleID int64, defaultActions, stopActions []config.Action, previous, current Evaluation) (Plan, []Conflict) {
+	return buildPlan(cycleID, defaultActions, stopActions, previous, current)
+}
+
+func buildPlan(cycleID int64, defaultActions, stopActions []config.Action, previous, current Evaluation) (Plan, []Conflict) {
 	selected := actions(defaultActions, "default.on_task_start", 0, "default")
 	ruleCandidates := []PlannedAction{}
 	for _, id := range sortedRuleIDs(current.ActiveRuleIDs) {
@@ -63,6 +67,7 @@ func buildPlan(cycleID int64, defaultActions []config.Action, previous, current 
 	}
 	rules, conflicts := dedupe(ruleCandidates)
 	selected = append(selected, rules...)
+	selected = append(selected, actions(stopActions, "stop.on_task_end", 0, "stop")...)
 	for index := range selected {
 		selected[index].ActionID = fmt.Sprintf("%d-%d", cycleID, index+1)
 	}

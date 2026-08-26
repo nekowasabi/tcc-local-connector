@@ -962,22 +962,45 @@ func TestDryRunSkipsSideEffects(t *testing.T) {
 
 func TestTaskSnapshotDeltaInitialAndInvalidPreserve(t *testing.T) {
 	first := "task_0123456789abcdef0123456789abcdef"
-	current, started, err := observeTaskSnapshot([]tcc2.RunningTask{{TaskID: first}}, nil, false)
-	if err != nil || len(current) != 1 || len(started) != 1 {
-		t.Fatalf("initial snapshot = current:%v started:%v err:%v", current, started, err)
+	current, started, ended, err := observeTaskSnapshot([]tcc2.RunningTask{{TaskID: first}}, nil, false)
+	if err != nil || len(current) != 1 || len(started) != 1 || len(ended) != 0 {
+		t.Fatalf("initial snapshot = current:%v started:%v ended:%v err:%v", current, started, ended, err)
 	}
-	if _, _, err := observeTaskSnapshot([]tcc2.RunningTask{{TaskID: ""}}, current, true); err == nil {
+	if _, _, _, err := observeTaskSnapshot([]tcc2.RunningTask{{TaskID: ""}}, current, true); err == nil {
 		t.Fatal("missing task ID was accepted")
 	} else if err.reason != "missing" {
 		t.Fatalf("missing reason = %q", err.reason)
 	}
-	if _, _, err := observeTaskSnapshot([]tcc2.RunningTask{{TaskID: first}, {TaskID: first}}, current, true); err == nil {
+	if _, _, _, err := observeTaskSnapshot([]tcc2.RunningTask{{TaskID: first}, {TaskID: first}}, current, true); err == nil {
 		t.Fatal("duplicate task ID was accepted")
 	} else if err.reason != "duplicate" {
 		t.Fatalf("duplicate reason = %q", err.reason)
 	}
 	if len(current) != 1 {
 		t.Fatalf("previous snapshot changed: %v", current)
+	}
+}
+
+func TestTaskSnapshotDeltaEnded(t *testing.T) {
+	first := "task_0123456789abcdef0123456789abcdef"
+	second := "task_1123456789abcdef0123456789abcdef"
+	previous := map[string]struct{}{first: {}}
+	current, started, ended, err := observeTaskSnapshot([]tcc2.RunningTask{{TaskID: second}}, previous, true)
+	if err != nil || len(current) != 1 || len(started) != 1 || len(ended) != 1 {
+		t.Fatalf("replacement snapshot = current:%v started:%v ended:%v err:%v", current, started, ended, err)
+	}
+	if _, ok := started[second]; !ok {
+		t.Fatalf("started=%v, want %s", started, second)
+	}
+	if _, ok := ended[first]; !ok {
+		t.Fatalf("ended=%v, want %s", ended, first)
+	}
+	current, started, ended, err = observeTaskSnapshot(nil, previous, true)
+	if err != nil || len(current) != 0 || len(started) != 0 || len(ended) != 1 {
+		t.Fatalf("empty snapshot = current:%v started:%v ended:%v err:%v", current, started, ended, err)
+	}
+	if _, ok := ended[first]; !ok {
+		t.Fatalf("ended=%v, want %s", ended, first)
 	}
 }
 
@@ -1182,6 +1205,216 @@ func TestInvalidTaskIDObservationKeepsSnapshotAndRunsRules(t *testing.T) {
 				t.Fatalf("recovery plan = %#v", recoveryPlans)
 			}
 		})
+	}
+}
+
+func TestStopTaskEndAcrossCycles(t *testing.T) {
+	fake, snapshotPath := createMutableFakeMCPScript(t)
+	first := "task_0123456789abcdef0123456789abcdef"
+	second := "task_1123456789abcdef0123456789abcdef"
+	var plans []rules.Plan
+	engine := New(Deps{
+		BrowserPolicyStore: &memoryPolicyStore{},
+		Emit: func(event string, value any) {
+			if event == "plan" {
+				plans = append(plans, value.(rules.Plan))
+			}
+		},
+	})
+	engine.cfg = lifecycleModeTestConfig(fake, nil, []config.Action{{
+		Type: "notify", Title: "Task ended", Message: "Stop",
+	}}, nil)
+
+	snapshots := []string{
+		runningTaskSnapshot("Active", first),
+		runningTaskSnapshot("Active renamed", first),
+		runningTaskSnapshot("Active", first) + `\n` + runningTaskLine("Active second", second),
+		runningTaskSnapshot("Active second", second),
+		emptyTaskSnapshot(),
+	}
+	for _, snapshot := range snapshots {
+		writeMutableSnapshot(t, snapshotPath, snapshot)
+		if _, err := engine.RunCycleNow(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(plans) != 5 {
+		t.Fatalf("plan events = %d, want 5", len(plans))
+	}
+	stopCounts := make([]int, len(plans))
+	for index, plan := range plans {
+		for _, action := range plan.Actions {
+			if action.Phase == "stop" {
+				stopCounts[index]++
+			}
+		}
+	}
+	if !reflect.DeepEqual(stopCounts, []int{0, 0, 0, 1, 1}) {
+		t.Fatalf("stop counts = %#v", stopCounts)
+	}
+}
+
+func TestStopFailureDoesNotStopRemainingStopActions(t *testing.T) {
+	fake, snapshotPath := createMutableFakeMCPScript(t)
+	first := "task_0123456789abcdef0123456789abcdef"
+	stopMarker := filepath.Join(t.TempDir(), "stop-ran")
+	ruleMarker := filepath.Join(t.TempDir(), "rule-ran")
+	engine := New(Deps{BrowserPolicyStore: &memoryPolicyStore{}})
+	engine.cfg = lifecycleModeTestConfig(fake, nil, []config.Action{
+		{Type: "command.run", Executable: "/usr/bin/false"},
+		{Type: "command.run", Executable: writeMarkerScript(t, stopMarker)},
+	}, []config.Action{{
+		Type: "command.run", Executable: writeMarkerScript(t, ruleMarker),
+	}})
+	writeMutableSnapshot(t, snapshotPath, runningTaskSnapshot("Active", first))
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	writeMutableSnapshot(t, snapshotPath, emptyTaskSnapshot())
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{stopMarker, ruleMarker} {
+		if _, err := os.Stat(marker); err != nil {
+			t.Fatalf("remaining action did not run (%s): %v", marker, err)
+		}
+	}
+}
+
+func TestPlanDispatchStopAfterRules(t *testing.T) {
+	fake, snapshotPath := createMutableFakeMCPScript(t)
+	first := "task_0123456789abcdef0123456789abcdef"
+	second := "task_1123456789abcdef0123456789abcdef"
+	marker := filepath.Join(t.TempDir(), "stop-backend-ran")
+	stopCommand := writeMarkerScript(t, marker)
+	var plans []rules.Plan
+	engine := New(Deps{
+		BrowserPolicyStore: &memoryPolicyStore{},
+		Emit: func(event string, value any) {
+			if event == "plan" {
+				plan := value.(rules.Plan)
+				plans = append(plans, plan)
+			}
+		},
+	})
+	engine.cfg = lifecycleModeTestConfig(fake, nil, []config.Action{
+		{Type: "notify", Title: "Before backend", Message: "Stop first"},
+		{Type: "command.run", Executable: stopCommand},
+		{Type: "notify", Title: "After backend", Message: "Stop second"},
+		{Type: "app.stop", BundleID: "com.example.Stop"},
+	}, []config.Action{
+		{Type: "notify", Title: "Rule active", Message: "Rules"},
+		{Type: "app.stop", BundleID: "com.example.Rule"},
+	})
+	writeMutableSnapshot(t, snapshotPath, runningTaskSnapshot("Active", first))
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	writeMutableSnapshot(t, snapshotPath, runningTaskSnapshot("Active", second))
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("stop backend did not run: %v", err)
+	}
+	endPlans := plansForCycle(plans, 2)
+	if len(endPlans) != 5 {
+		t.Fatalf("end plan events = %d, want 5: %#v", len(endPlans), endPlans)
+	}
+	var phases []string
+	var titles []string
+	seenStop := false
+	for _, plan := range endPlans {
+		if !reflect.DeepEqual(plan.EnforceStopBundleIDs, []string{"com.example.Rule", "com.example.Stop"}) {
+			t.Fatalf("enforce_stop_bundle_ids = %#v", plan.EnforceStopBundleIDs)
+		}
+		if len(plan.Actions) != 1 {
+			t.Fatalf("public actions = %#v", plan.Actions)
+		}
+		action := plan.Actions[0]
+		if action.Phase == "stop" {
+			seenStop = true
+		} else if seenStop {
+			t.Fatalf("rules action followed stop action: %#v", endPlans)
+		}
+		if action.Kind == "command.run" {
+			t.Fatalf("backend action leaked into public plan: %#v", endPlans)
+		}
+		phases = append(phases, action.Phase)
+		titles = append(titles, action.Title)
+	}
+	if !reflect.DeepEqual(phases, []string{"rules", "rules", "stop", "stop", "stop"}) {
+		t.Fatalf("phases = %#v", phases)
+	}
+	if titles[1] != "Rule active" || titles[2] != "Before backend" || titles[3] != "After backend" {
+		t.Fatalf("dispatch order changed: %#v", titles)
+	}
+}
+
+func TestInvalidTaskIDObservationDoesNotFireStop(t *testing.T) {
+	fake, snapshotPath := createMutableFakeMCPScript(t)
+	first := "task_0123456789abcdef0123456789abcdef"
+	var plans []rules.Plan
+	engine := New(Deps{
+		BrowserPolicyStore: &memoryPolicyStore{},
+		Emit: func(event string, value any) {
+			if event == "plan" {
+				plans = append(plans, value.(rules.Plan))
+			}
+		},
+	})
+	engine.cfg = lifecycleModeTestConfig(fake, nil, []config.Action{{
+		Type: "notify", Title: "Task ended", Message: "Stop",
+	}}, []config.Action{{
+		Type: "notify", Title: "Rule active", Message: "Rules continue",
+	}})
+
+	writeMutableSnapshot(t, snapshotPath, runningTaskSnapshot("Active", first))
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	writeMutableSnapshot(t, snapshotPath, "## 2026-08-21\\n- [In Progress] Active")
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	invalidPlans := plansForCycle(plans, 2)
+	if len(invalidPlans) != 1 || len(invalidPlans[0].Actions) != 1 || invalidPlans[0].Actions[0].Phase != "rules" {
+		t.Fatalf("invalid observation plan = %#v", invalidPlans)
+	}
+
+	writeMutableSnapshot(t, snapshotPath, emptyTaskSnapshot())
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	recoveryPlans := plansForCycle(plans, 3)
+	if len(recoveryPlans) != 1 || recoveryPlans[0].Actions[0].Phase != "stop" {
+		t.Fatalf("recovery plan = %#v", recoveryPlans)
+	}
+}
+
+func TestDryRunTaskEndIsNotReplayedWhenExecutionIsEnabled(t *testing.T) {
+	fake, snapshotPath := createMutableFakeMCPScript(t)
+	taskID := "task_0123456789abcdef0123456789abcdef"
+	marker := filepath.Join(t.TempDir(), "stop-ran")
+	engine := New(Deps{BrowserPolicyStore: &memoryPolicyStore{}})
+	engine.cfg = lifecycleModeTestConfig(fake, nil, []config.Action{{
+		Type: "command.run", Executable: writeMarkerScript(t, marker),
+	}}, nil)
+	engine.cfg.Safety.DryRun = true
+	writeMutableSnapshot(t, snapshotPath, runningTaskSnapshot("Active", taskID))
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	writeMutableSnapshot(t, snapshotPath, emptyTaskSnapshot())
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	engine.cfg.Safety.DryRun = false
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("dry-run stop action was replayed: %v", err)
 	}
 }
 
@@ -1516,6 +1749,10 @@ func writeMarkerScript(t *testing.T, marker string) string {
 }
 
 func defaultModeTestConfig(executable string, defaultActions, ruleActions []config.Action) *config.Config {
+	return lifecycleModeTestConfig(executable, defaultActions, nil, ruleActions)
+}
+
+func lifecycleModeTestConfig(executable string, defaultActions, stopActions, ruleActions []config.Action) *config.Config {
 	return &config.Config{
 		Version: constants.ConfigSchemaVersion,
 		TaskSource: config.TaskSource{
@@ -1532,12 +1769,17 @@ func defaultModeTestConfig(executable string, defaultActions, ruleActions []conf
 		Safety:  config.Safety{},
 		Logging: config.Logging{Level: constants.DefaultLogLevel, RetainDays: constants.DefaultLogRetainDays},
 		Default: config.Default{OnTaskStart: defaultActions},
+		Stop:    config.Stop{OnTaskEnd: stopActions},
 		Rules: []config.Rule{{
 			ID:     "active",
 			Match:  config.Match{TaskNameContains: []string{"Active"}},
 			Ensure: ruleActions,
 		}},
 	}
+}
+
+func emptyTaskSnapshot() string {
+	return "## 2026-08-21\\n- [Done] Finished"
 }
 
 func writeEnsureConfig(t *testing.T, path, executable string, intervalSeconds int) {

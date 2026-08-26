@@ -311,7 +311,7 @@ func (e *Engine) RunCycleNow(ctx context.Context) (int64, error) {
 		}
 		return id, err
 	}
-	taskIDs, started, snapshotErr := observeTaskSnapshot(result.RunningTasks, e.taskIDs, e.taskIDsSet)
+	taskIDs, started, ended, snapshotErr := observeTaskSnapshot(result.RunningTasks, e.taskIDs, e.taskIDsSet)
 	if snapshotErr != nil {
 		e.logger.Log(logging.Entry{Level: "warn", Component: "engine", Event: "invalid_task_id_observation", Reason: snapshotErr.reason})
 	}
@@ -334,7 +334,11 @@ func (e *Engine) RunCycleNow(ctx context.Context) (int64, error) {
 	if snapshotErr == nil && len(started) > 0 {
 		defaultActions = cfg.Default.OnTaskStart
 	}
-	plan, _ := rules.BuildPlanWithDefault(id, defaultActions, previous, current)
+	var stopActions []config.Action
+	if snapshotErr == nil && len(ended) > 0 {
+		stopActions = cfg.Stop.OnTaskEnd
+	}
+	plan, _ := rules.BuildPlanWithLifecycle(id, defaultActions, stopActions, previous, current)
 	plan.DryRun = cfg.Safety.DryRun
 	e.previous = current
 	if snapshotErr == nil {
@@ -395,30 +399,36 @@ func (e *taskSnapshotError) Error() string {
 	return "invalid_task_id_observation: " + e.reason
 }
 
-func observeTaskSnapshot(tasks []tcc2.RunningTask, previous map[string]struct{}, initialized bool) (map[string]struct{}, map[string]struct{}, *taskSnapshotError) {
+func observeTaskSnapshot(tasks []tcc2.RunningTask, previous map[string]struct{}, initialized bool) (map[string]struct{}, map[string]struct{}, map[string]struct{}, *taskSnapshotError) {
 	current := make(map[string]struct{}, len(tasks))
 	for _, task := range tasks {
 		if !taskIDPattern.MatchString(task.TaskID) {
-			return nil, nil, &taskSnapshotError{reason: "missing"}
+			return nil, nil, nil, &taskSnapshotError{reason: "missing"}
 		}
 		if _, exists := current[task.TaskID]; exists {
-			return nil, nil, &taskSnapshotError{reason: "duplicate"}
+			return nil, nil, nil, &taskSnapshotError{reason: "duplicate"}
 		}
 		current[task.TaskID] = struct{}{}
 	}
 	started := map[string]struct{}{}
+	ended := map[string]struct{}{}
 	if !initialized {
 		for taskID := range current {
 			started[taskID] = struct{}{}
 		}
-		return current, started, nil
+		return current, started, ended, nil
 	}
 	for taskID := range current {
 		if _, exists := previous[taskID]; !exists {
 			started[taskID] = struct{}{}
 		}
 	}
-	return current, started, nil
+	for taskID := range previous {
+		if _, exists := current[taskID]; !exists {
+			ended[taskID] = struct{}{}
+		}
+	}
+	return current, started, ended, nil
 }
 
 func publicPlan(plan rules.Plan) rules.Plan {
