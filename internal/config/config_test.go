@@ -68,6 +68,58 @@ func TestValidateDefaultOnTaskStartAllowsCrossPhaseProcessID(t *testing.T) {
 	}
 }
 
+func TestValidateStopOnTaskEndNormalizesAndPreservesCompatibility(t *testing.T) {
+	cfg := defaults()
+	cfg.TaskSource.Executable = "/bin/echo"
+	if _, errs := Validate(&cfg); len(errs) != 0 || cfg.Stop.OnTaskEnd == nil || len(cfg.Stop.OnTaskEnd) != 0 {
+		t.Fatalf("undefined stop = %#v, %#v", cfg.Stop, errs)
+	}
+
+	cfg.Stop.OnTaskEnd = []Action{{Type: "command.run", Executable: "/bin/echo"}}
+	if _, errs := Validate(&cfg); len(errs) != 0 {
+		t.Fatalf("valid stop = %#v", errs)
+	}
+	if got := cfg.Stop.OnTaskEnd[0].TimeoutSeconds; got != constants.DefaultActionTimeoutSeconds {
+		t.Fatalf("stop timeout = %d, want %d", got, constants.DefaultActionTimeoutSeconds)
+	}
+}
+
+func TestValidateStopOnTaskEndRejectsUnsafeAndConflictingActions(t *testing.T) {
+	cases := []struct {
+		name   string
+		action []Action
+		code   string
+	}{
+		{name: "browser block", action: []Action{{Type: constants.BrowserBlockActionType}}, code: codeUnsupportedAction},
+		{name: "timeout", action: []Action{{Type: "command.run", Executable: "/bin/echo", TimeoutSeconds: constants.MaxActionTimeoutSeconds + 1}}, code: codeValueOutOfRange},
+		{name: "shell", action: []Action{{Type: "command.run", Executable: "/bin/echo", Shell: true}}, code: codeShellNotAllowed},
+		{name: "app conflict", action: []Action{{Type: "app.start", BundleID: "com.example.App"}, {Type: "app.stop", BundleID: "com.example.App"}}, code: codeRuleConflictSamePriority},
+		{name: "process conflict", action: []Action{{Type: "process.start", ProcessID: "worker", Executable: "/bin/echo"}, {Type: "process.stop", ProcessID: "worker"}}, code: codeRuleConflictSamePriority},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := defaults()
+			cfg.TaskSource.Executable = "/bin/echo"
+			cfg.Stop.OnTaskEnd = tc.action
+			_, errs := Validate(&cfg)
+			if !hasValidationCode(errs, tc.code) {
+				t.Fatalf("errors=%#v, want %s", errs, tc.code)
+			}
+		})
+	}
+}
+
+func TestValidateStopOnTaskEndAllowsCrossPhaseProcessID(t *testing.T) {
+	cfg := defaults()
+	cfg.TaskSource.Executable = "/bin/echo"
+	cfg.Default.OnTaskStart = []Action{{Type: "process.start", ProcessID: "worker", Executable: "/bin/echo"}}
+	cfg.Stop.OnTaskEnd = []Action{{Type: "process.start", ProcessID: "worker", Executable: "/bin/echo"}}
+	cfg.Rules = []Rule{{ID: "rule", Ensure: []Action{{Type: "process.start", ProcessID: "worker", Executable: "/bin/echo"}}}}
+	if _, errs := Validate(&cfg); len(errs) != 0 {
+		t.Fatalf("cross-phase process ID rejected: %#v", errs)
+	}
+}
+
 func TestValidateRejectsUnsafeAndInvalidValues(t *testing.T) {
 	cfg := defaults()
 	cfg.Version = 99

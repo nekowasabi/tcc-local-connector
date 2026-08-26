@@ -299,6 +299,59 @@ func TestBuildPlanWithDefault_SequencesPhasesWithoutCrossPhaseDedupe(t *testing.
 	}
 }
 
+func TestBuildPlanWithLifecycle_SequencesStopAfterRules(t *testing.T) {
+	defaultActions := []config.Action{
+		{Type: "notify", Title: "start", Message: "default"},
+	}
+	stopActions := []config.Action{
+		{Type: "notify", Title: "end", Message: "stop"},
+		{Type: "process.stop", ProcessID: "worker"},
+	}
+	current := Evaluation{
+		ActiveRuleIDs: map[string]bool{"r": true},
+		Rules: map[string]config.Rule{"r": {ID: "r", Priority: 10, Ensure: []config.Action{
+			{Type: "process.start", ProcessID: "worker", Executable: "/bin/echo"},
+			{Type: "notify", Title: "rule", Message: "rules"},
+		}}},
+	}
+
+	plan, conflicts := BuildPlanWithLifecycle(7, defaultActions, stopActions, Evaluation{}, current)
+	if len(conflicts) != 0 || len(plan.Actions) != 5 {
+		t.Fatalf("plan=%#v conflicts=%#v", plan, conflicts)
+	}
+	wantIDs := []string{"7-1", "7-2", "7-3", "7-4", "7-5"}
+	for i, action := range plan.Actions {
+		if action.ActionID != wantIDs[i] {
+			t.Fatalf("action[%d] id=%q want=%q", i, action.ActionID, wantIDs[i])
+		}
+	}
+	if plan.Actions[0].Phase != "default" || plan.Actions[1].Phase != "rules" || plan.Actions[2].Phase != "rules" || plan.Actions[3].Phase != "stop" || plan.Actions[4].Phase != "stop" {
+		t.Fatalf("phases=%#v", plan.Actions)
+	}
+	if plan.Actions[3].Reason != "stop.on_task_end" || plan.Actions[4].Reason != "stop.on_task_end" {
+		t.Fatalf("stop reasons=%#v", plan.Actions[3:])
+	}
+	processPhases := map[string]bool{}
+	for _, action := range plan.Actions {
+		if action.ProcessID == "worker" {
+			processPhases[action.Phase] = true
+		}
+	}
+	if !processPhases["rules"] || !processPhases["stop"] {
+		t.Fatalf("cross-phase action was not retained: %#v", plan.Actions)
+	}
+}
+
+func TestBuildPlanWithLifecycle_SkipsBrowserBlockInStop(t *testing.T) {
+	plan, _ := BuildPlanWithLifecycle(1, nil, []config.Action{
+		{Type: "browser.block", Domains: []string{"example.com"}},
+		{Type: "notify", Title: "hello", Message: "world"},
+	}, Evaluation{}, Evaluation{})
+	if len(plan.Actions) != 1 || plan.Actions[0].Kind != "notify" || plan.Actions[0].Phase != "stop" {
+		t.Fatalf("actions=%#v", plan.Actions)
+	}
+}
+
 func TestBuildPlanWithDefault_SkipsBrowserBlock(t *testing.T) {
 	plan, _ := BuildPlanWithDefault(1, []config.Action{
 		{Type: "browser.block", Domains: []string{"example.com"}},

@@ -92,7 +92,11 @@ func Validate(cfg *Config) (*Config, []ValidationError) {
 	if cfg.Default.OnTaskStart == nil {
 		cfg.Default.OnTaskStart = []Action{}
 	}
-	errors = append(errors, validateDefaultActions(cfg.Default.OnTaskStart, cfg.Safety.AllowShell)...)
+	if cfg.Stop.OnTaskEnd == nil {
+		cfg.Stop.OnTaskEnd = []Action{}
+	}
+	errors = append(errors, validateLifecycleActions(cfg.Default.OnTaskStart, "default.on_task_start", "on_task_start", cfg.Safety.AllowShell)...)
+	errors = append(errors, validateLifecycleActions(cfg.Stop.OnTaskEnd, "stop.on_task_end", "on_task_end", cfg.Safety.AllowShell)...)
 	ruleIDs, processIDs, conflicts := map[string]bool{}, map[string]bool{}, map[string]string{}
 	for i := range cfg.Rules {
 		errors = append(errors, validateRule(&cfg.Rules[i], i, cfg.Safety.AllowShell, ruleIDs, processIDs, conflicts)...)
@@ -103,15 +107,15 @@ func Validate(cfg *Config) (*Config, []ValidationError) {
 	return cfg, nil
 }
 
-func validateDefaultActions(actions []Action, allowShell bool) []ValidationError {
+func validateLifecycleActions(actions []Action, pathPrefix, group string, allowShell bool) []ValidationError {
 	var errors []ValidationError
 	if len(actions) > constants.MaxActionsPerRule {
-		errors = append(errors, validation(codeValueOutOfRange, "default.on_task_start"))
+		errors = append(errors, validation(codeValueOutOfRange, pathPrefix))
 	}
 	processIDs, conflicts, processConflicts := map[string]bool{}, map[string]string{}, map[string]string{}
 	for i := range actions {
 		action := &actions[i]
-		path := "default.on_task_start[" + strconv.Itoa(i) + "]"
+		path := pathPrefix + "[" + strconv.Itoa(i) + "]"
 		if action.Type == constants.BrowserBlockActionType {
 			errors = append(errors, validation(codeUnsupportedAction, path+".type"))
 			continue
@@ -119,7 +123,7 @@ func validateDefaultActions(actions []Action, allowShell bool) []ValidationError
 		if action.Type == "command.run" && action.TimeoutSeconds == 0 {
 			action.TimeoutSeconds = constants.DefaultActionTimeoutSeconds
 		}
-		errors = append(errors, validateAction(action, path, "on_task_start", allowShell, processIDs, conflicts, 0)...)
+		errors = append(errors, validateAction(action, path, group, allowShell, processIDs, conflicts, 0)...)
 		if action.Type == "process.start" || action.Type == "process.stop" {
 			recordProcessConflict(processConflicts, action.Type, action.ProcessID, path, &errors)
 		}

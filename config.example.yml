@@ -8,6 +8,8 @@ safety:
   dry_run: true
 default:
   on_task_start: []
+stop:
+  on_task_end: []
 rules:
   - id: example
     match:
