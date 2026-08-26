@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -85,7 +86,7 @@ func serve(options options) error {
 		return fmt.Errorf("open log file: %w", err)
 	}
 	defer logFile.Close()
-	if err := logFile.Chmod(constants.StateFileMode); err != nil {
+	if err := logFile.Chmod(constants.StateFileMode); err != nil && runtime.GOOS != "windows" {
 		return fmt.Errorf("set log file permissions: %w", err)
 	}
 	backend := engine.New(engine.Deps{ConfigPath: options.configPath, LogWriter: io.MultiWriter(os.Stderr, logFile)})

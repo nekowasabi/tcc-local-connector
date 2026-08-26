@@ -3,7 +3,6 @@ package ledger
 import (
 	"context"
 	"os/exec"
-	"syscall"
 	"time"
 )
 
@@ -62,7 +61,7 @@ func (m *Manager) Stop(ctx context.Context, id string, grace time.Duration, dryR
 		m.Ledger.Remove(id)
 		return StopResult{Status: "orphan_dropped"}, m.Ledger.Save()
 	}
-	if err := syscall.Kill(entry.PID, syscall.SIGTERM); err != nil {
+	if err := terminateManaged(entry.PID); err != nil {
 		return StopResult{Status: "refused"}, err
 	}
 	timer := time.NewTimer(grace)
