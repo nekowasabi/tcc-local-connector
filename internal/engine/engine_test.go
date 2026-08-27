@@ -668,6 +668,40 @@ func TestEngine_ReloadReturnsErrorForInvalidConfig(t *testing.T) {
 	}
 }
 
+func TestEngine_ReloadInvalidConfigEmitsNotification(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	configPath := filepath.Join(t.TempDir(), "invalid-config.yml")
+	if err := os.WriteFile(configPath, []byte("version: 2\ntask_source:\n  executable: /bin/echo\npolling:\n  interval_seconds: 10\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var notifications []map[string]any
+	engine := New(Deps{
+		ConfigPath:         configPath,
+		BrowserPolicyStore: &memoryPolicyStore{},
+		Emit: func(event string, value any) {
+			if event == "notify" {
+				notifications = append(notifications, value.(map[string]any))
+			}
+		},
+	})
+
+	result := engine.Reload()
+	if result.OK {
+		t.Fatal("Reload() succeeded, want validation error")
+	}
+	if len(notifications) != 1 {
+		t.Fatalf("notifications = %d, want 1", len(notifications))
+	}
+	if notifications[0]["code"] != "config_error" || notifications[0]["title"] != "設定エラー" {
+		t.Fatalf("notification = %#v", notifications[0])
+	}
+	message, ok := notifications[0]["message"].(string)
+	if !ok || !strings.Contains(message, "polling.timeout_seconds") {
+		t.Fatalf("notification message = %#v", notifications[0]["message"])
+	}
+}
+
 func TestEngine_PauseAndResumeLifecycle(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

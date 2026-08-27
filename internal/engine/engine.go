@@ -242,6 +242,8 @@ func (e *Engine) LoadConfig() ReloadResult {
 	if len(errs) > 0 {
 		e.mu.Unlock()
 		_ = e.publishEmptyBrowserPolicy()
+		// Why: Reuse event.notify so startup and manual reload errors share the resident app's warning path.
+		e.emitEvent("notify", configErrorNotification(errs))
 		return ReloadResult{OK: false, Errors: errs}
 	}
 	e.cfg = cfg
@@ -255,6 +257,28 @@ func (e *Engine) LoadConfig() ReloadResult {
 	_ = e.publishEmptyBrowserPolicy()
 	go e.emitEvent("state_changed", current)
 	return result
+}
+
+func configErrorNotification(validationErrors []config.ValidationError) map[string]any {
+	details := make([]string, 0, len(validationErrors))
+	for _, validationError := range validationErrors {
+		if validationError.Path != "" {
+			details = append(details, validationError.Code+": "+validationError.Path)
+			continue
+		}
+		if validationError.Message != "" {
+			details = append(details, validationError.Message)
+			continue
+		}
+		details = append(details, validationError.Code)
+	}
+	return map[string]any{
+		"level":   "error",
+		"code":    "config_error",
+		"title":   "設定エラー",
+		"message": "設定エラー: " + strings.Join(details, ", "),
+		"at":      time.Now().UTC(),
+	}
 }
 func (e *Engine) RunCycleNow(ctx context.Context) (int64, error) {
 	e.mu.Lock()
