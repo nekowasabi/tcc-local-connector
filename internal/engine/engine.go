@@ -583,7 +583,7 @@ func actionResult(actionID, status string, err error) ActionResult {
 func commandRunSpec(ctx context.Context, action rules.PlannedAction) (*exec.Cmd, error) {
 	if action.Shell {
 		commandLine := strings.TrimSpace(action.Executable + " " + strings.Join(action.Args, " "))
-		return exec.CommandContext(ctx, "/bin/sh", "-c", commandLine), nil
+		return shellCommand(ctx, commandLine), nil
 	}
 	cmd := exec.CommandContext(ctx, action.Executable, action.Args...)
 	cmd.Dir = action.WorkingDir
