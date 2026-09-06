@@ -9,3 +9,8 @@ dist/
 engine.out
 macos/.build/
 internal/ledger/.tmp
+
+# Windows (.NET) build outputs
+windows/**/bin/
+windows/**/obj/
+release/

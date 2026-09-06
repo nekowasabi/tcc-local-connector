@@ -1,0 +1,13 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- Why: net8.0-windows must build on WSL/Linux; this pulls the Windows reference packs from NuGet. -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <!-- Why: the dev box only has the .NET 10 runtime; let net8.0 test hosts run on it. -->
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+</Project>
