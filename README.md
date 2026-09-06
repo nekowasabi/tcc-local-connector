@@ -78,7 +78,7 @@ TaskChute Cloud 2 の実行中タスクを取得し、設定したルールに�
 - 強制終了は行いません。完全終了は `quit` でのみ実行
 - ブラウザ URL 誘導は対象外です
 - tmux / nvim 連携は対象外です
-- Windows 版は対象外です
+- Windows 版は実 Windows 上での動作確認が未実施です（「Windows 版」節を参照）
 - 外部プロセス名だけでの停止は実施しません
 - `config.yml` を書き換えられる利用者は本アプリ権限で任意コードを実行できる
 - `DefaultFailureGraceSeconds` 相当の遅延後に制御を解放する場合があります
@@ -103,6 +103,46 @@ TaskChute Cloud 2 の実行中タスクを取得し、設定したルールに�
 - 設定: `~/.config/tcc-local-connector/config.yml`
 - 一時停止: `~/.local/state/tcc-local-connector/pause.json`
 - 台帳: `~/.local/state/tcc-local-connector/managed-processes.json`
+
+## Windows 版
+
+タスクトレイ常駐の .NET 8 アプリ（`windows/`）と Go バックエンドを WSL/Linux 上でクロスビルドします。実 Windows での動作確認は未実施です（Linux 上のビルドと単体テストのみ）。
+
+### ビルド
+
+- 要件: Go 1.26、.NET 8 SDK 以上（`EnableWindowsTargeting` により Linux から win-x64 を publish 可）
+- `make win-release` で `release/` に次の 3 つが出力されます
+  - `TCCLocalConnector.exe`（トレイアプリ）
+  - `tcc-local-connector-backend.exe`（バックエンド）
+  - `tcc-firefox-native-host.exe`（Firefox Native Messaging Host）
+- 補助: `make win-build`（ビルド）、`make win-test`（単体テスト）、`make win-clean`
+
+### 配置と起動
+
+- 3 つの exe を同じフォルダに置きます。
+- `config.yml` を exe と同じフォルダに置くとそれが使われます。無ければ `%USERPROFILE%\.config\tcc-local-connector\config.yml` を読みます。
+- 状態ファイルとログは `%USERPROFILE%\.local\state\tcc-local-connector\`（`backend.log`、`pause.json`、`managed-processes.json`）です。
+- `TCCLocalConnector.exe` をダブルクリックするとトレイに常駐します（ウィンドウなし）。トレイアイコンの右クリックメニューは macOS 版と同じ項目です。`notify` はトレイのバルーン通知で表示します。
+
+### 設定の差分
+
+- `bundle_id` は実行ファイル名を書きます（例: `slack.exe`、`firefox.exe`）。
+- `app.start` は ShellExecute 経由で起動するため、App Paths レジストリに登録されたアプリは PATH に無くても起動できます。
+- `app.stop` はウィンドウ閉じ要求（WM_CLOSE）を送り、grace 秒以内に終了しなければ強制終了します。
+- `command.run` の `shell: true` は `cmd /S /C` で実行します。
+- `task_source.executable` は tcc2 の exe の絶対パス（Windows パス）を書きます。
+- `config.yml` のパーミッション検査（0600）は Windows では行われません。
+
+### Firefox
+
+起動時に Host マニフェストを `%APPDATA%\TCCLocalConnector\NativeMessagingHosts\jp.takets.tcc_local_connector.firefox.json` へ書き、`HKCU\Software\Mozilla\NativeMessagingHosts\jp.takets.tcc_local_connector.firefox` に登録します。拡張の読み込みは macOS と同じく `about:debugging` から `firefox-extension/manifest.json` を選択します。owner heartbeat は `%APPDATA%\TCCLocalConnector\BrowserPolicy\` に書きます。削除はレジストリキーとマニフェストを手動で消します（uninstall スクリプトは macOS 用）。
+
+### 制約
+
+- 実 Windows 上での動作確認は未実施です。
+- 未署名 exe のため SmartScreen / Defender の警告が出ることがあります。
+- 単一インスタンス保証はありません（多重起動を防ぎません）。
+
 ## Firefox ESR 拡張の導入
 
 Firefox ESR を導入してから、アプリをビルドし、一時拡張を読み込みます。Native Messaging Host は `make dev` / `scripts/make-app-bundle.sh` とアプリ起動時に自動登録します。対象ブラウザは Firefox のみです。
