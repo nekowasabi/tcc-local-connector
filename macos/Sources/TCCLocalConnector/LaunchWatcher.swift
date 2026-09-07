@@ -41,13 +41,17 @@ private struct DefaultObservedApplication: LaunchObservedApplication {
 @objc final class LaunchWatcher: NSObject {
     private let center: LaunchWatchCenter
     private let appFromNotification: (Notification) -> LaunchObservedApplication?
+    private let lockNotifier: LaunchLockNotifier
+
     init(
         center: LaunchWatchCenter = DefaultLaunchWatchCenter(),
+        lockNotifier: LaunchLockNotifier = TerminalNotifierLockNotifier(),
         appFromNotification: @escaping (Notification) -> LaunchObservedApplication? = {
             ($0.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication).map(DefaultObservedApplication.init)
         }
     ) {
         self.center = center
+        self.lockNotifier = lockNotifier
         self.appFromNotification = appFromNotification
     }
 
@@ -70,6 +74,7 @@ private struct DefaultObservedApplication: LaunchObservedApplication {
             return
         }
         _ = app.terminate()
+        lockNotifier.notifyLocked(bundleID: bundleID)
     }
 
     func stop() {

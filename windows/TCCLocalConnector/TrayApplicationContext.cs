@@ -12,7 +12,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly NotifyIcon _icon;
     private readonly BackendClient _backend = new();
     private readonly WindowsPlanExecutor _executor;
-    private readonly LaunchWatcher _watcher = new();
+    private readonly LaunchWatcher _watcher;
     private readonly BrowserPolicyHeartbeat _heartbeat = new();
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = Constants.MenuRefreshIntervalSeconds * 1000 };
     private readonly ToolStripMenuItem _stateItem = new();
@@ -56,6 +56,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             ContextMenuStrip = menu,
         };
         _executor = new WindowsPlanExecutor(_icon);
+        _watcher = new LaunchWatcher(new BalloonLockNotifier(_icon));
         _timer.Tick += (_, _) => Synchronize();
         Start();
     }

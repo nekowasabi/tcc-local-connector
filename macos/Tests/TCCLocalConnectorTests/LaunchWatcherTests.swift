@@ -6,7 +6,8 @@ final class LaunchWatcherTests: XCTestCase {
     func testLaunchWatcher_ImmediateTerminateOnMatch() {
         let notificationCenter = FakeNotificationCenter()
         let launchedApp = FakeLaunchApplication(bundleIdentifier: "com.example.app")
-        let watcher = LaunchWatcher(center: notificationCenter) { notification in
+        let lockNotifier = FakeLockNotifier()
+        let watcher = LaunchWatcher(center: notificationCenter, lockNotifier: lockNotifier) { notification in
             notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? FakeLaunchApplication
         }
 
@@ -20,6 +21,60 @@ final class LaunchWatcherTests: XCTestCase {
         )
 
         XCTAssertTrue(launchedApp.didTerminate)
+        XCTAssertEqual(lockNotifier.bundleIDs, ["com.example.app"])
+        XCTAssertEqual(LaunchLockNotification.title, "Locked")
+        XCTAssertTrue(LaunchLockNotification.body(bundleID: "com.example.app").contains("locked"))
+    }
+
+    func testTerminalNotifierLockNotifier_PostsLockedSystemNotification() {
+        let runner = FakeTerminalNotifierRunner()
+        let notifier = TerminalNotifierLockNotifier(runner: runner)
+
+        notifier.notifyLocked(bundleID: "com.example.app")
+
+        XCTAssertEqual(runner.invocations.count, 1)
+        XCTAssertEqual(runner.invocations.first, [
+            "-title", LaunchLockNotification.title,
+            "-message", LaunchLockNotification.body(bundleID: "com.example.app"),
+        ])
+        XCTAssertTrue((runner.invocations.first ?? []).contains { $0.contains("locked") })
+    }
+
+    func testLaunchWatcher_NonMatchingLaunchDoesNotTerminateOrNotify() {
+        let notificationCenter = FakeNotificationCenter()
+        let launchedApp = FakeLaunchApplication(bundleIdentifier: "com.other.app")
+        let lockNotifier = FakeLockNotifier()
+        let watcher = LaunchWatcher(center: notificationCenter, lockNotifier: lockNotifier) { notification in
+            notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? FakeLaunchApplication
+        }
+
+        watcher.update(enforceStopBundleIDs: ["com.example.app"])
+        notificationCenter.send(
+            Notification(
+                name: NSWorkspace.didLaunchApplicationNotification,
+                object: nil,
+                userInfo: [NSWorkspace.applicationUserInfoKey: launchedApp]
+            )
+        )
+
+        XCTAssertFalse(launchedApp.didTerminate)
+        XCTAssertEqual(lockNotifier.bundleIDs, [])
+    }
+}
+
+private final class FakeTerminalNotifierRunner: TerminalNotifierRunning {
+    private(set) var invocations: [[String]] = []
+
+    func run(arguments: [String]) {
+        invocations.append(arguments)
+    }
+}
+
+private final class FakeLockNotifier: LaunchLockNotifier {
+    private(set) var bundleIDs: [String] = []
+
+    func notifyLocked(bundleID: String) {
+        bundleIDs.append(bundleID)
     }
 }
 

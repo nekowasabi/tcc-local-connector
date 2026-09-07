@@ -15,5 +15,6 @@ public static class Constants
     public const int PauseNextDayStartHour = 5;
     public const int AppStopPollIntervalMilliseconds = 250;
     public const int LaunchWatchPollIntervalMilliseconds = 2000;
+    public const int LaunchLockNotifyDebounceMilliseconds = 10000;
     public const int HeartbeatIntervalSeconds = 5;
 }
