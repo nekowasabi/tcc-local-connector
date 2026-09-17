@@ -46,14 +46,6 @@ func NormalizeDomains(domains []string) ([]string, error) {
 	return result, nil
 }
 
-func MergeDomains(groups ...[]string) ([]string, error) {
-	var merged []string
-	for _, group := range groups {
-		merged = append(merged, group...)
-	}
-	return NormalizeDomains(merged)
-}
-
 func Fingerprint(domains []string) string {
 	normalized, err := NormalizeDomains(domains)
 	if err != nil {

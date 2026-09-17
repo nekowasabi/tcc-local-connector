@@ -10,6 +10,15 @@ import (
 	"time"
 )
 
+// MergeDomains was removed from production; test the same behavior through NormalizeDomains.
+func mergeDomainsForTest(lists ...[]string) ([]string, error) {
+	var all []string
+	for _, list := range lists {
+		all = append(all, list...)
+	}
+	return NormalizeDomains(all)
+}
+
 func TestPolicyDecodeStrictSchema(t *testing.T) {
 	valid := `{"version":1,"generation":1,"enforce":true,"dry_run":false,"domains":["example.com"],"planned_domains":["example.com"],"updated_at":"2026-08-12T01:02:03.000000004Z"}`
 	if _, err := Decode([]byte(valid)); err != nil {
@@ -42,9 +51,9 @@ func TestPolicyNormalizeMergeAndFingerprint(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("NormalizeDomains() = %#v, want %#v", got, want)
 	}
-	merged, err := MergeDomains([]string{"b.example"}, []string{"a.example", "b.example"})
+	merged, err := mergeDomainsForTest([]string{"b.example"}, []string{"a.example", "b.example"})
 	if err != nil || !reflect.DeepEqual(merged, want) {
-		t.Fatalf("MergeDomains() = %#v, %v", merged, err)
+		t.Fatalf("mergeDomainsForTest() = %#v, %v", merged, err)
 	}
 	if Fingerprint(want) != Fingerprint([]string{"B.EXAMPLE.", "a.example"}) {
 		t.Fatal("fingerprint differs for the same normalized set")
