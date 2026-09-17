@@ -103,16 +103,13 @@ final class MacPlanExecutorTests: XCTestCase {
         XCTAssertFalse(app.wasTerminated)
     }
 
-    func testNotify_FailureDowngradedToRecent() async {
-        let poster = FakeNotificationPoster(shouldSucceed: false)
+    func testNotify_AlwaysAccepted() async {
         let action = PlanAction(type: "notify", id: "1-1", title: "テスト", message: "通知")
-        let executor = MacPlanExecutor(poster: poster, startTimeoutSeconds: 0.1)
+        let executor = MacPlanExecutor(startTimeoutSeconds: 0.1)
 
         let outcomes = await executor.execute([action], dryRun: false)
 
         XCTAssertEqual(outcomes, [.accepted])
-        XCTAssertEqual(poster.recentMessages.count, 1)
-        XCTAssertEqual(poster.postedMessages.count, 1)
     }
 
     func testPlanOverlap_CompletesCurrentBeforeNext() async {
@@ -128,7 +125,6 @@ final class MacPlanExecutorTests: XCTestCase {
 
     func testDryRun_NoSideEffects() async {
         let workspace = FakeLaunchWorkspace(openShouldTimeout: true)
-        let poster = FakeNotificationPoster()
         let actions = [
             PlanAction(type: "app.start", id: "1-1", bundleID: "com.example.app"),
             PlanAction(type: "app.stop", id: "1-2", bundleID: "com.example.app"),
@@ -136,13 +132,11 @@ final class MacPlanExecutorTests: XCTestCase {
             PlanAction(type: "unsupported", id: "1-4")
         ]
 
-        let executor = MacPlanExecutor(workspace: workspace, poster: poster, startTimeoutSeconds: 0.1)
+        let executor = MacPlanExecutor(workspace: workspace, startTimeoutSeconds: 0.1)
         let outcomes = await executor.execute(actions, dryRun: true)
 
         XCTAssertEqual(outcomes, [.skipped, .skipped, .skipped, .skipped])
         XCTAssertEqual(workspace.openedBundleIDs.count, 0)
-        XCTAssertEqual(poster.recentMessages.count, 0)
-        XCTAssertEqual(poster.postedMessages.count, 0)
     }
 }
 
@@ -223,24 +217,5 @@ private final class FakeLaunchWorkspace: LaunchWorkspace, @unchecked Sendable {
     func terminate(bundleID: String) {
         terminatedBundleIDs.append(bundleID)
         appStore[bundleID]?.forEach { _ = $0.terminate() }
-    }
-}
-
-final class FakeNotificationPoster: NotificationPoster, @unchecked Sendable {
-    private(set) var postedMessages: [String] = []
-    private(set) var recentMessages: [String] = []
-    let shouldSucceed: Bool
-
-    init(shouldSucceed: Bool = true) {
-        self.shouldSucceed = shouldSucceed
-    }
-
-    func post(_ action: PlanAction) async -> Bool {
-        postedMessages.append(action.id)
-        return shouldSucceed
-    }
-
-    func recordRecent(_ message: String) {
-        recentMessages.append(message)
     }
 }

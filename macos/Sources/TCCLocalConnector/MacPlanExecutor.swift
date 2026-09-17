@@ -55,41 +55,15 @@ struct DefaultLaunchWorkspace: LaunchWorkspace {
     }
 }
 
-protocol NotificationPoster: Sendable {
-    func post(_ action: PlanAction) async -> Bool
-    func recordRecent(_ message: String)
-}
-
-final class DefaultNotificationPoster: NotificationPoster, @unchecked Sendable {
-    private let notifier: Notifier
-
-    init(notifier: Notifier = Notifier()) {
-        self.notifier = notifier
-    }
-
-    func post(_ action: PlanAction) async -> Bool {
-        let message = [action.title ?? "", action.message ?? ""].joined(separator: " ").trimmingCharacters(in: .whitespaces)
-        notifier.post(message.isEmpty ? "notify" : message)
-        return true
-    }
-
-    func recordRecent(_ message: String) {
-        notifier.recordRecent(message)
-    }
-}
-
 final class MacPlanExecutor: PlanExecutor, @unchecked Sendable {
     private let workspace: LaunchWorkspace
-    private let poster: NotificationPoster
     private let startTimeoutSeconds: TimeInterval
 
     init(
         workspace: LaunchWorkspace = DefaultLaunchWorkspace(),
-        poster: NotificationPoster = DefaultNotificationPoster(),
         startTimeoutSeconds: TimeInterval = TimeInterval(Constants.backendRequestTimeoutSeconds)
     ) {
         self.workspace = workspace
-        self.poster = poster
         self.startTimeoutSeconds = startTimeoutSeconds
     }
 
@@ -163,11 +137,6 @@ final class MacPlanExecutor: PlanExecutor, @unchecked Sendable {
     }
 
     private func notify(_ action: PlanAction) async -> ActionOutcome {
-        let delivered = await poster.post(action)
-        if !delivered {
-            let message = [action.title ?? "", action.message ?? ""].joined(separator: ":")
-            poster.recordRecent(message)
-        }
         return .accepted
     }
 

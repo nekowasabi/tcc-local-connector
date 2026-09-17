@@ -11,5 +11,4 @@ public enum Constants {
 	public static let pausePresetShortSeconds = 900
 	public static let pausePresetLongSeconds = 3600
 	public static let appStopPollIntervalMilliseconds = 250
-	public static let notifierRecentCapacity = 20
 }
