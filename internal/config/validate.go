@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -364,7 +365,8 @@ func executable(path string) bool {
 		return false
 	}
 	info, err := os.Stat(path)
-	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
+	// Why: Windows の FileMode には実行ビットが無く、常に false になるため検査しない
+	return err == nil && !info.IsDir() && (runtime.GOOS == "windows" || info.Mode()&0o111 != 0)
 }
 func oneOf(value string, allowed ...string) bool {
 	for _, v := range allowed {
