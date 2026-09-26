@@ -103,6 +103,9 @@ func Load(path string) (*Config, []ValidationError, error) {
 		}
 		return nil, []ValidationError{{Code: codeParseError, Message: "configuration syntax is invalid"}}, nil
 	}
+	if cfg.TaskSource.Executable == "" {
+		cfg.TaskSource.Executable = defaultTaskSourceExecutable()
+	}
 	if cfg.Safety.AllowShell {
 		info, statErr := f.Stat()
 		if statErr != nil || info.Mode().Perm()&constants.ConfigStrictModeMask != 0 {

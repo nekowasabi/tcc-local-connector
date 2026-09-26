@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 var ErrInsecurePermissions = errors.New("insecure_permissions")
@@ -29,4 +30,19 @@ func CheckPermissions(path string) (*os.File, error) {
 		return nil, fmt.Errorf("%w: cannot open configuration", ErrInsecurePermissions)
 	}
 	return file, nil
+}
+
+// defaultTaskSourceExecutable returns the Scoop shim path for tcc2 if present.
+// Why: scoop install tcc2 で入れた tcc2 を設定なしで使うため。
+func defaultTaskSourceExecutable() string {
+	root := os.Getenv("SCOOP")
+	if root == "" {
+		root = filepath.Join(os.Getenv("USERPROFILE"), "scoop")
+	}
+	shim := filepath.Join(root, "shims", "tcc2.exe")
+	info, err := os.Stat(shim)
+	if err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	return shim
 }

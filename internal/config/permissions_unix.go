@@ -45,3 +45,8 @@ func CheckPermissions(path string) (*os.File, error) {
 	}
 	return file, nil
 }
+
+// defaultTaskSourceExecutable has no platform-specific default outside Windows.
+func defaultTaskSourceExecutable() string {
+	return ""
+}
