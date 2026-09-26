@@ -1,6 +1,10 @@
 .PHONY: all build-go build-swift build-firefox-extension bundle dev build-go-windows win-build win-test win-release win-clean
 
+ifeq ($(PC),wsl)
+all: win-release
+else
 all: build-go build-swift bundle
+endif
 
 build-go:
 	go build ./...
@@ -26,8 +30,33 @@ WIN_APP     := windows/TCCLocalConnector/TCCLocalConnector.csproj
 WIN_RID     ?= win-x64
 RELEASE_DIR := release
 
+ifeq ($(OS),Windows_NT)
+WINDOWS_BUILD := powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows.ps1
+
+build-go-windows:
+	$(WINDOWS_BUILD) build-go
+
+win-build:
+	$(WINDOWS_BUILD) build
+
+win-test: win-build
+	$(WINDOWS_BUILD) test
+
+win-release: build-go-windows
+	$(WINDOWS_BUILD) release
+
+win-clean:
+	$(WINDOWS_BUILD) clean
+else
+# Why: Run from local disk, not \\wsl.localhost — AV heuristics flag UNC-launched exes.
+RELEASE_DIR := /mnt/c/takeda/tools/tcc-local-connector
+
 build-go-windows:
 	mkdir -p $(RELEASE_DIR)
+	# Why: 起動中の exe はロックされ上書きできないため先に止める
+	-taskkill.exe /IM TCCLocalConnector.exe /F >/dev/null 2>&1
+	-taskkill.exe /IM tcc-local-connector-backend.exe /F >/dev/null 2>&1
+	-taskkill.exe /IM tcc-firefox-native-host.exe /F >/dev/null 2>&1
 	GOOS=windows GOARCH=amd64 go build -o $(RELEASE_DIR)/tcc-local-connector-backend.exe ./cmd/tcc-local-connector-backend
 	GOOS=windows GOARCH=amd64 go build -o $(RELEASE_DIR)/tcc-firefox-native-host.exe ./cmd/tcc-firefox-native-host
 
@@ -37,15 +66,17 @@ win-build:
 win-test: win-build
 	$(DOTNET) test $(WIN_SLN) -c Release --no-build
 
+# Why: Framework-dependent folder publish, not self-extracting single-file — self-extraction looks like a dropper to AV.
 win-release: build-go-windows
-	$(DOTNET) publish $(WIN_APP) -c Release -r $(WIN_RID) --self-contained true \
-		-p:PublishSingleFile=true \
+	$(DOTNET) publish $(WIN_APP) -c Release -r $(WIN_RID) --self-contained false \
+		-p:PublishSingleFile=false \
 		-p:DebugType=None \
 		-p:CopyOutputSymbolsToPublishDirectory=false \
 		-o $(RELEASE_DIR)
-	find $(RELEASE_DIR) -type f ! -name 'TCCLocalConnector.exe' ! -name 'tcc-local-connector-backend.exe' ! -name 'tcc-firefox-native-host.exe' -delete
 	ls -la $(RELEASE_DIR)
+	cd $(RELEASE_DIR) && powershell.exe -NoProfile -Command "Start-Process -FilePath .\TCCLocalConnector.exe"
 
+# Why: RELEASE_DIR は Windows 側の配置先なので消さない
 win-clean:
 	$(DOTNET) clean $(WIN_SLN) -c Release
-	rm -rf $(RELEASE_DIR)
+endif

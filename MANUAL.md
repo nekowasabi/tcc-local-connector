@@ -181,7 +181,7 @@ Windows 版はタスクトレイ常駐の .NET 8 アプリ（`windows/`）と Go
 
 ### 11-1. ビルド
 
-WSL/Linux 上で実行します。Go 1.26 と .NET 8 SDK 以上が必要です（`EnableWindowsTargeting` により Linux から win-x64 を publish できます）。
+Windows の GNU Make または WSL/Linux 上で実行します。Go 1.26 と .NET 8 SDK 以上が必要です（`EnableWindowsTargeting` により Linux から win-x64 を publish できます）。Windows の GNU Make は PowerShell を使って実行します。
 
 ```bash
 make win-release

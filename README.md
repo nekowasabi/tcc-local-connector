@@ -106,11 +106,11 @@ TaskChute Cloud 2 の実行中タスクを取得し、設定したルールに�
 
 ## Windows 版
 
-タスクトレイ常駐の .NET 8 アプリ（`windows/`）と Go バックエンドを WSL/Linux 上でクロスビルドします。実 Windows での動作確認は未実施です（Linux 上のビルドと単体テストのみ）。
+タスクトレイ常駐の .NET 8 アプリ（`windows/`）と Go バックエンドです。Windows の GNU Make では PowerShell を使ってビルドし、WSL/Linux では従来どおりクロスビルドします。実 Windows での動作確認は未実施です（Linux 上のビルドと単体テストのみ）。
 
 ### ビルド
 
-- 要件: Go 1.26、.NET 8 SDK 以上（`EnableWindowsTargeting` により Linux から win-x64 を publish 可）
+- 要件: GNU Make、Go 1.26、.NET 8 SDK 以上（`EnableWindowsTargeting` により Linux から win-x64 を publish 可）
 - `make win-release` で `release/` に次の 3 つが出力されます
   - `TCCLocalConnector.exe`（トレイアプリ）
   - `tcc-local-connector-backend.exe`（バックエンド）
