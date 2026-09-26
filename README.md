@@ -47,6 +47,32 @@ TaskChute Cloud 2 の実行中タスクを取得し、設定したルールに�
 
 `run-once` は TaskChute の取得と、設定された Go 側のプロセス・コマンド操作を1回だけ実行します。アプリ起動・通常終了・通知は macOS メニューバーアプリが `plan` を受けて実行します。
 
+## tcc2 のインストール
+
+### macOS（Homebrew）
+
+- `brew install jMatsuzaki-Inc/tap/tcc2`
+- `tcc2 login`
+- 設定: `task_source.executable: /opt/homebrew/bin/tcc2`
+
+### Windows（Scoop）
+
+- `scoop bucket add tcc2 https://github.com/jMatsuzaki-Inc/scoop-tcc2`
+- `scoop install tcc2`
+- `tcc2 login`
+- `task_source.executable` を省略すると `%SCOOP%\shims\tcc2.exe`（`SCOOP` 未設定時は `%USERPROFILE%\scoop\shims\tcc2.exe`）を自動で使います。
+
+### Windows + WSL（WSL 内に Homebrew で導入した tcc2 を使う）
+
+- WSL 内で `brew install jMatsuzaki-Inc/tap/tcc2`
+- WSL 内で `tcc2 login`
+- 設定例:
+  ```yaml
+  task_source:
+    executable: C:\Windows\System32\wsl.exe
+    args: ["-e", "/home/linuxbrew/.linuxbrew/bin/tcc2", "mcp"]
+  ```
+
 ## 設定の作り方
 
 1. `config.example.yml` をコピー
@@ -130,7 +156,7 @@ TaskChute Cloud 2 の実行中タスクを取得し、設定したルールに�
 - `app.start` は ShellExecute 経由で起動するため、App Paths レジストリに登録されたアプリは PATH に無くても起動できます。
 - `app.stop` はウィンドウ閉じ要求（WM_CLOSE）を送り、grace 秒以内に終了しなければ強制終了します。
 - `command.run` の `shell: true` は `cmd /S /C` で実行します。
-- `task_source.executable` は tcc2 の exe の絶対パス（Windows パス）を書きます。
+- `task_source.executable` は tcc2 の exe の絶対パス（Windows パス）を書きます。Scoop でインストールした場合は省略可（shim パスを自動検出）。WSL 内の tcc2 を使う場合は `wsl.exe` 経由の設定にします（「tcc2 のインストール」節を参照）。
 - `config.yml` のパーミッション検査（0600）は Windows では行われません。
 
 ### Firefox
