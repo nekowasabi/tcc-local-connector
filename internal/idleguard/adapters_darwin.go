@@ -14,9 +14,21 @@ import (
 // can only be verified on a real Mac. Quitting is always a normal
 // AppleScript `quit`; the adapters never terminate processes.
 
-// listScript lists regular foreground processes as name/bundle-id/unix-id
-// triples through System Events.
-const listScript = `tell application "System Events" to get {name, bundle identifier, unix id} of (every application process whose background only is false)`
+// listScript lists regular foreground processes as TSV (name TAB bundle id).
+// MAC_UNVERIFIED: System Events `get {name, bundle identifier} of every process`
+// returns parallel lists, not per-app triples, so the script emits TSV instead.
+const listScript = `set output to ""
+tell application "System Events"
+  repeat with p in (every application process whose background only is false)
+    set n to name of p
+    set b to ""
+    try
+      set b to bundle identifier of p
+    end try
+    set output to output & n & tab & b & linefeed
+  end repeat
+end tell
+return output`
 
 // SystemIdleDuration reports how long the Mac has seen no user input.
 // MAC_UNVERIFIED: reads HIDIdleTime from ioreg on darwin.

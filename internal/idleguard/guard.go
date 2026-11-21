@@ -94,6 +94,14 @@ func New() *Guard {
 	return &Guard{phase: PhaseWatching}
 }
 
+// Reset returns the machine to watching. Used when the feature is disabled.
+func (g *Guard) Reset() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.phase = PhaseWatching
+	g.warnedAt = time.Time{}
+}
+
 // PhaseOf reports the current phase.
 func (g *Guard) PhaseOf() Phase {
 	g.mu.Lock()
@@ -204,13 +212,15 @@ func ParseHIDIdleTime(output []byte) (idle time.Duration, ok bool) {
 	return time.Duration(value), true
 }
 
-// ParseForegroundApps parses the osascript triple list
-// `{{"Name", "bundle.id", pid}, ...}` into apps. A flat comma-separated
-// triple sequence is accepted as a fallback.
+// ParseForegroundApps parses darwin TSV (`name<TAB>bundle`) or an AppleScript
+// list of per-app triples `{{"Name", "bundle.id", pid}, ...}`.
 func ParseForegroundApps(output string) []App {
 	trimmed := strings.TrimSpace(output)
 	if trimmed == "" {
 		return nil
+	}
+	if strings.Contains(trimmed, "\t") {
+		return parseForegroundTSV(trimmed)
 	}
 	var apps []App
 	for _, group := range splitTopGroups(trimmed) {
@@ -225,6 +235,27 @@ func ParseForegroundApps(output string) []App {
 		}
 		if name == "" || name == "missing value" {
 			continue
+		}
+		apps = append(apps, App{Name: name, BundleID: bundleID})
+	}
+	return apps
+}
+
+func parseForegroundTSV(output string) []App {
+	var apps []App
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		name, bundleID, _ := strings.Cut(line, "\t")
+		name = strings.TrimSpace(name)
+		bundleID = strings.TrimSpace(bundleID)
+		if name == "" || name == "missing value" {
+			continue
+		}
+		if bundleID == "missing value" {
+			bundleID = ""
 		}
 		apps = append(apps, App{Name: name, BundleID: bundleID})
 	}

@@ -215,6 +215,72 @@ func TestTickIdleGuardDryRunLogsWithoutQuitOrActivate(t *testing.T) {
 	}
 }
 
+func TestTickIdleGuardUnreadableIdleCancelsCountdown(t *testing.T) {
+	fake := createFakeMCPScript(t)
+	recorder := &idleRecorder{}
+	engine := idleTestEngine(t, recorder, nil, false)
+	engine.cfg = idleTestConfig(fake, 60, false)
+	engine.idleFor, engine.idleList, engine.idleQuit, engine.idleNotify, engine.idleActivate = idleFakes(recorder, 16*time.Minute)
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	engine.tickIdleGuard(now)
+	if engine.guard.PhaseOf() != idleguard.PhaseCountdown {
+		t.Fatalf("phase = %q", engine.guard.PhaseOf())
+	}
+	engine.idleFor = func() (time.Duration, bool) { return 0, false }
+	engine.tickIdleGuard(now.Add(time.Second))
+	if engine.guard.PhaseOf() != idleguard.PhaseWatching {
+		t.Fatalf("phase after unread idle = %q", engine.guard.PhaseOf())
+	}
+	if len(recorder.quits) != 0 {
+		t.Fatalf("unread idle quit = %#v", recorder.quits)
+	}
+}
+
+func TestTickIdleGuardDisabledResetsCountdown(t *testing.T) {
+	fake := createFakeMCPScript(t)
+	recorder := &idleRecorder{}
+	engine := idleTestEngine(t, recorder, nil, false)
+	engine.cfg = idleTestConfig(fake, 60, false)
+	engine.idleFor, engine.idleList, engine.idleQuit, engine.idleNotify, engine.idleActivate = idleFakes(recorder, 16*time.Minute)
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	engine.tickIdleGuard(time.Now())
+	engine.cfg.IdleGuard.Enabled = false
+	engine.tickIdleGuard(time.Now())
+	if engine.guard.PhaseOf() != idleguard.PhaseWatching {
+		t.Fatalf("phase = %q", engine.guard.PhaseOf())
+	}
+}
+
+func TestTickIdleGuardListFailureStillNotifies(t *testing.T) {
+	fake := createFakeMCPScript(t)
+	recorder := &idleRecorder{}
+	var logs strings.Builder
+	engine := idleTestEngine(t, recorder, &logs, false)
+	engine.cfg = idleTestConfig(fake, 0, false)
+	engine.idleFor, _, engine.idleQuit, engine.idleNotify, engine.idleActivate = idleFakes(recorder, 16*time.Minute)
+	engine.idleList = func() ([]idleguard.App, error) {
+		return nil, context.Canceled
+	}
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	engine.tickIdleGuard(time.Now())
+	if recorder.activated != 1 {
+		t.Fatalf("activated = %d", recorder.activated)
+	}
+	if got := notifyCodes(recorder); len(got) != 2 || got[1] != "idle_guard_fired" {
+		t.Fatalf("codes = %#v", got)
+	}
+	if !strings.Contains(logs.String(), "idle_guard_list_failed") {
+		t.Fatalf("missing list failure log: %s", logs.String())
+	}
+}
+
 func TestRunCycleNowPushesIdleSnapshot(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Run("no tasks", func(t *testing.T) {

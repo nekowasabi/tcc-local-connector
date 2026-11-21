@@ -43,6 +43,9 @@ func (e *Engine) systemIdle() (time.Duration, bool) {
 func (e *Engine) tickIdleGuard(now time.Time) {
 	cfg, ok := e.idleGuardConfig()
 	if !ok {
+		if e.guard != nil {
+			e.guard.Reset()
+		}
 		return
 	}
 	e.mu.Lock()
@@ -54,9 +57,9 @@ func (e *Engine) tickIdleGuard(now time.Time) {
 	if guard == nil {
 		return
 	}
-	idle, ok := e.systemIdle()
-	if !ok {
-		return
+	idle, idleOK := e.systemIdle()
+	if !idleOK {
+		idle = 0
 	}
 	for _, effect := range guard.Tick(idleguard.Input{
 		Now:            now,
@@ -99,7 +102,6 @@ func (e *Engine) fireIdleGuard(effect idleguard.Effect, cfg idleguard.Config) {
 	apps, err := list()
 	if err != nil {
 		e.logger.Log(logging.Entry{Level: "warn", Component: "engine", Event: "idle_guard_list_failed", Message: err.Error()})
-		return
 	}
 	targets := idleguard.FilterApps(apps, cfg.ExcludeApps)
 	if effect.DryRun {

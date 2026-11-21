@@ -264,6 +264,32 @@ func TestParseForegroundApps(t *testing.T) {
 	}
 }
 
+func TestParseForegroundAppsTSV(t *testing.T) {
+	output := "Finder\tcom.apple.finder\nSafari\tcom.apple.Safari\nNoBundle\t\nmissing value\tcom.x\n"
+	apps := ParseForegroundApps(output)
+	if len(apps) != 3 {
+		t.Fatalf("apps = %#v", apps)
+	}
+	if apps[0].Name != "Finder" || apps[0].BundleID != "com.apple.finder" {
+		t.Fatalf("apps[0] = %#v", apps[0])
+	}
+	if apps[2].Name != "NoBundle" || apps[2].BundleID != "" {
+		t.Fatalf("apps[2] = %#v", apps[2])
+	}
+}
+
+func TestResetReturnsToWatching(t *testing.T) {
+	g := New()
+	cfg := Config{Enabled: true, IdleMinutes: 15, GraceSeconds: 60}
+	if effects := g.Tick(idleInput(time.Now(), 16*time.Minute, false, true, false), cfg); len(effects) != 1 {
+		t.Fatalf("warn = %#v", effects)
+	}
+	g.Reset()
+	if g.PhaseOf() != PhaseWatching {
+		t.Fatalf("phase = %q", g.PhaseOf())
+	}
+}
+
 func TestEscapeAppleScriptString(t *testing.T) {
 	if got := EscapeAppleScriptString(`a"b\c`); got != `a\"b\\c` {
 		t.Fatalf("escaped = %q", got)
