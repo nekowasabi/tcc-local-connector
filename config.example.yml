@@ -10,6 +10,19 @@ default:
   on_task_start: []
 stop:
   on_task_end: []
+idle_guard:
+  enabled: false
+  idle_minutes: 15
+  grace_seconds: 60
+  exclude_apps:
+    - Finder
+    - Dock
+    - SystemUIServer
+    - TCC Local Connector
+    - TaskChute Cloud
+    - TaskChute Cloud 2
+    - Terminal
+    - iTerm2
 rules:
   - id: example
     match:

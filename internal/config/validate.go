@@ -93,11 +93,17 @@ func Validate(cfg *Config) (*Config, []ValidationError) {
 	if cfg.Default.OnTaskStart == nil {
 		cfg.Default.OnTaskStart = []Action{}
 	}
+	if cfg.IdleGuard.IdleMinutes == 0 && cfg.IdleGuard.GraceSeconds == 0 && !cfg.IdleGuard.Enabled && len(cfg.IdleGuard.ExcludeApps) == 0 {
+		cfg.IdleGuard = IdleGuard{Enabled: false, IdleMinutes: constants.DefaultIdleGuardIdleMinutes, GraceSeconds: constants.DefaultIdleGuardGraceSeconds, ExcludeApps: defaultIdleGuardExcludeApps()}
+	} else if cfg.IdleGuard.ExcludeApps == nil {
+		cfg.IdleGuard.ExcludeApps = defaultIdleGuardExcludeApps()
+	}
 	if cfg.Stop.OnTaskEnd == nil {
 		cfg.Stop.OnTaskEnd = []Action{}
 	}
 	errors = append(errors, validateLifecycleActions(cfg.Default.OnTaskStart, "default.on_task_start", "on_task_start", cfg.Safety.AllowShell)...)
 	errors = append(errors, validateLifecycleActions(cfg.Stop.OnTaskEnd, "stop.on_task_end", "on_task_end", cfg.Safety.AllowShell)...)
+	errors = append(errors, validateIdleGuard(&cfg.IdleGuard)...)
 	ruleIDs, processIDs, conflicts := map[string]bool{}, map[string]bool{}, map[string]string{}
 	for i := range cfg.Rules {
 		errors = append(errors, validateRule(&cfg.Rules[i], i, cfg.Safety.AllowShell, ruleIDs, processIDs, conflicts)...)
@@ -106,6 +112,22 @@ func Validate(cfg *Config) (*Config, []ValidationError) {
 		return nil, errors
 	}
 	return cfg, nil
+}
+
+func validateIdleGuard(guard *IdleGuard) []ValidationError {
+	var errors []ValidationError
+	if guard.IdleMinutes <= 0 {
+		errors = append(errors, validation(codeValueOutOfRange, "idle_guard.idle_minutes"))
+	}
+	if guard.GraceSeconds < 0 {
+		errors = append(errors, validation(codeValueOutOfRange, "idle_guard.grace_seconds"))
+	}
+	for i, name := range guard.ExcludeApps {
+		if strings.TrimSpace(name) == "" {
+			errors = append(errors, validation(codeValueOutOfRange, "idle_guard.exclude_apps["+strconv.Itoa(i)+"]"))
+		}
+	}
+	return errors
 }
 
 func validateLifecycleActions(actions []Action, pathPrefix, group string, allowShell bool) []ValidationError {

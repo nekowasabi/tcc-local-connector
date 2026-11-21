@@ -20,6 +20,7 @@ type Config struct {
 	Logging    Logging    `yaml:"logging" json:"logging"`
 	Default    Default    `yaml:"default" json:"default"`
 	Stop       Stop       `yaml:"stop" json:"stop"`
+	IdleGuard  IdleGuard  `yaml:"idle_guard" json:"idle_guard"`
 	Rules      []Rule     `yaml:"rules" json:"rules"`
 }
 type Polling struct {
@@ -58,6 +59,12 @@ type Default struct {
 type Stop struct {
 	OnTaskEnd []Action `yaml:"on_task_end" json:"on_task_end"`
 }
+type IdleGuard struct {
+	Enabled      bool     `yaml:"enabled" json:"enabled"`
+	IdleMinutes  int      `yaml:"idle_minutes" json:"idle_minutes"`
+	GraceSeconds int      `yaml:"grace_seconds" json:"grace_seconds"`
+	ExcludeApps  []string `yaml:"exclude_apps" json:"exclude_apps"`
+}
 type Match struct {
 	TaskNameContains    []string `yaml:"task_name_contains" json:"task_name_contains"`
 	TaskNameNotContains []string `yaml:"task_name_not_contains" json:"task_name_not_contains"`
@@ -80,8 +87,12 @@ type Action struct {
 	Domains        []string          `yaml:"domains" json:"domains"`
 }
 
+func defaultIdleGuardExcludeApps() []string {
+	return []string{"Finder", "Dock", "SystemUIServer", "TCC Local Connector", "TaskChute Cloud", "TaskChute Cloud 2", "Terminal", "iTerm2"}
+}
+
 func defaults() Config {
-	return Config{Version: constants.ConfigSchemaVersion, Polling: Polling{IntervalSeconds: constants.DefaultPollIntervalSeconds, TimeoutSeconds: constants.DefaultPollTimeoutSeconds, FailureGraceSeconds: constants.DefaultFailureGraceSeconds, FailurePolicy: "release_controls"}, TaskSource: TaskSource{Type: "tcc2_mcp", Args: []string{"mcp"}}, Safety: Safety{DryRun: true}, Logging: Logging{Level: constants.DefaultLogLevel, RetainDays: constants.DefaultLogRetainDays}, Default: Default{OnTaskStart: []Action{}}, Stop: Stop{OnTaskEnd: []Action{}}, Rules: []Rule{}}
+	return Config{Version: constants.ConfigSchemaVersion, Polling: Polling{IntervalSeconds: constants.DefaultPollIntervalSeconds, TimeoutSeconds: constants.DefaultPollTimeoutSeconds, FailureGraceSeconds: constants.DefaultFailureGraceSeconds, FailurePolicy: "release_controls"}, TaskSource: TaskSource{Type: "tcc2_mcp", Args: []string{"mcp"}}, Safety: Safety{DryRun: true}, Logging: Logging{Level: constants.DefaultLogLevel, RetainDays: constants.DefaultLogRetainDays}, Default: Default{OnTaskStart: []Action{}}, Stop: Stop{OnTaskEnd: []Action{}}, IdleGuard: IdleGuard{Enabled: false, IdleMinutes: constants.DefaultIdleGuardIdleMinutes, GraceSeconds: constants.DefaultIdleGuardGraceSeconds, ExcludeApps: defaultIdleGuardExcludeApps()}, Rules: []Rule{}}
 }
 
 func Load(path string) (*Config, []ValidationError, error) {

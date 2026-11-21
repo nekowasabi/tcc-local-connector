@@ -69,3 +69,27 @@ pause、取得失敗、grace/released、不正な設定reload、欠損・重複�
 ```
 
 `dry_run` の既定値は `true` です。バックエンドアクションを有効化する前に設定を棚卸しし、dry-run の計画とログを確認してください。
+
+## 無操作時の自動終了（idle_guard）
+
+実行中タスクが無く、無操作が続いた場合の警告と通常終了です。macOS のみ有効で、既定は無効です。省略時は `enabled: false`、`idle_minutes: 15`、`grace_seconds: 60` と既定の除外名になります。
+
+```yaml
+idle_guard:
+  enabled: false
+  idle_minutes: 15
+  grace_seconds: 60
+  exclude_apps:
+    - Finder
+    - TCC Local Connector
+    - TaskChute Cloud
+```
+
+| 項目 | 制約 |
+|---|---|
+| enabled | `true` でのみ動作 |
+| idle_minutes | 1以上 |
+| grace_seconds | 0以上。0は警告と発火を同じtickで実行 |
+| exclude_apps | 空名は不可。名前・bundle id の大文字小文字を区別しない完全一致 |
+
+警告後は猶予を待ち、条件が続く場合のみ除外外の通常アプリへ通常終了を要求します（強制終了なし）。`dry_run` では終了も TaskChute の前面化も行わず、記録と通知だけ行います。一時停止中やタスク取得失敗時は動作しません。

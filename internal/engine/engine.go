@@ -18,6 +18,7 @@ import (
 	"github.com/takets/tcc-local-connector/internal/browserpolicy"
 	"github.com/takets/tcc-local-connector/internal/config"
 	"github.com/takets/tcc-local-connector/internal/constants"
+	"github.com/takets/tcc-local-connector/internal/idleguard"
 	"github.com/takets/tcc-local-connector/internal/ledger"
 	"github.com/takets/tcc-local-connector/internal/logging"
 	"github.com/takets/tcc-local-connector/internal/rules"
@@ -66,9 +67,17 @@ type Engine struct {
 		Publish(bool, bool, []string, []string) (browserpolicy.Policy, error)
 		PublishEmpty() (browserpolicy.Policy, error)
 	}
-	policyPath string
-	policyMode browserPolicyState
-	dryRunFP   string
+	policyPath   string
+	policyMode   browserPolicyState
+	dryRunFP     string
+	guard        *idleguard.Guard
+	guardKnown   bool
+	guardHasTask bool
+	idleFor      func() (time.Duration, bool)
+	idleList     func() ([]idleguard.App, error)
+	idleQuit     func(idleguard.App) error
+	idleNotify   func(title, message string) error
+	idleActivate func() error
 }
 
 type browserPolicyState struct {
@@ -90,7 +99,7 @@ func New(deps Deps) *Engine {
 		logger = logging.New(deps.LogWriter, level)
 	}
 	logger.Rotate(stateDir, retainDays, time.Now())
-	engine := &Engine{configPath: path, machine: state.NewMachine(), status: Status{State: state.StateStarting, RunningTasks: []TaskView{}}, pausePath: filepath.Join(stateDir, constants.PauseFileName), emit: deps.Emit, logger: logger, taskIDs: map[string]struct{}{}}
+	engine := &Engine{configPath: path, machine: state.NewMachine(), status: Status{State: state.StateStarting, RunningTasks: []TaskView{}}, pausePath: filepath.Join(stateDir, constants.PauseFileName), emit: deps.Emit, logger: logger, taskIDs: map[string]struct{}{}, guard: idleguard.New()}
 	engine.policyPath = deps.BrowserPolicyPath
 	if engine.policyPath == "" {
 		engine.policyPath = defaultBrowserPolicyPath(path)
@@ -165,12 +174,16 @@ func (e *Engine) Run(ctx context.Context) {
 	defer timer.Stop()
 	policyTicker := time.NewTicker(constants.BrowserBackendHeartbeatIntervalSeconds * time.Second)
 	defer policyTicker.Stop()
+	idleTicker := time.NewTicker(time.Duration(constants.IdleGuardTickSeconds) * time.Second)
+	defer idleTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-policyTicker.C:
 			e.republishBrowserPolicy()
+		case now := <-idleTicker.C:
+			e.tickIdleGuard(now)
 		case now := <-timer.C:
 			if e.detectWake(now) {
 				tcc2.InvalidateUserCache()
@@ -323,6 +336,7 @@ func (e *Engine) RunCycleNow(ctx context.Context) (int64, error) {
 		e.status.State = e.machine.Current()
 		e.status.ParseOK = false
 		e.status.LastError = err.Error()
+		e.guardKnown = false
 		current := e.status
 		e.mu.Unlock()
 		if transition.ReleaseControls {
@@ -344,6 +358,8 @@ func (e *Engine) RunCycleNow(ctx context.Context) (int64, error) {
 		tasks[i] = TaskView{Name: task.Name, TaskID: task.TaskID, Date: task.Date}
 	}
 	e.status.RunningTasks = tasks
+	e.guardKnown = snapshotErr == nil
+	e.guardHasTask = len(tasks) > 0
 	e.status.ParseOK = snapshotErr == nil
 	if snapshotErr == nil {
 		e.status.LastError = ""

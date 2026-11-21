@@ -16,6 +16,7 @@ TaskChute Cloud 2 の実行中タスクを取得し、設定したルールに�
 - 会議系のタスク名にマッチしたら、録画アプリや議事録アプリを自動起動する
 - `default.on_task_start` で、新規タスク開始のたびに一度だけ通知を表示するなど、タスク名によらない既定アクションを設定する
 - `stop.on_task_end` で、タスク終了のたびに一度だけ通知を表示するなど、タスク名によらない終了アクションを設定する
+- 実行中タスクが無く無操作が続いた場合に警告して通常終了する（`idle_guard`、既定で無効、macOS のみ）
 
 ## 前提環境
 
@@ -123,6 +124,21 @@ TaskChute Cloud 2 の実行中タスクを取得し、設定したルールに�
 - 既定: `DefaultPollIntervalSeconds` = 60 秒
 - 最小: 10 秒（`MinPollIntervalSeconds`）
 - 180 秒より長い失敗連続は設計上の解除遅延に影響するため、既定を推奨
+
+## 無操作時の自動終了（idle_guard）
+
+実行中タスクが無く、無操作が `idle_minutes` 続いたら警告通知し、`grace_seconds` 後に通常終了を促します。macOS のみ有効で、既定は無効です。
+
+```yaml
+idle_guard:
+  enabled: false
+  idle_minutes: 15
+  grace_seconds: 60
+  exclude_apps: [Finder, TCC Local Connector, TaskChute Cloud]
+```
+
+- 通常終了のみ行い、強制終了はしません。`safety.dry_run: true` では終了も TaskChute の前面化も行わず、記録と通知だけ行います。
+- 一時停止中やタスク取得失敗時は動作しません。macOS 以外では何もしません。
 
 ## 参照ログと出力場所
 

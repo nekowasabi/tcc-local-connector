@@ -43,6 +43,10 @@ const (
 	NotifyTitleMaxRunes            = 200
 	NotifyMessageMaxRunes          = 500
 
+	DefaultIdleGuardIdleMinutes  = 15
+	DefaultIdleGuardGraceSeconds = 60
+	IdleGuardTickSeconds         = 1
+
 	PauseStateVersion       = 1
 	LedgerVersion           = 1
 	PauseMinSeconds         = 60
