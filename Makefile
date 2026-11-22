@@ -1,4 +1,4 @@
-.PHONY: all build-go build-swift build-firefox-extension bundle dev build-go-windows win-build win-test win-release win-clean
+.PHONY: all build-go build-swift build-firefox-extension addon bundle dev build-go-windows win-build win-test win-release win-clean
 
 ifeq ($(PC),wsl)
 all: win-release
@@ -14,6 +14,12 @@ build-swift:
 
 build-firefox-extension:
 	web-ext build --source-dir firefox-extension --artifacts-dir dist/firefox-extension --overwrite-dest
+
+# 拡張の version を上げて AMO の unlisted で署名し、通常版の Firefox でインストールを開く
+# （署名済みなので再起動しても外れない。通常版はアプリ管理の保護で policies.json を置けない）
+addon:
+	bash scripts/sign-firefox-extension.sh
+	open -a Firefox "$(HOME)/.local/share/tcc-local-connector/firefox-domain-blocker.xpi"
 
 bundle:
 	bash scripts/make-app-bundle.sh

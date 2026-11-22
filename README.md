@@ -161,7 +161,7 @@ TaskChute Cloud 2 の実行中タスクを取得し、設定したルールに�
 
 ### Firefox
 
-起動時に Host マニフェストを `%APPDATA%\TCCLocalConnector\NativeMessagingHosts\jp.takets.tcc_local_connector.firefox.json` へ書き、`HKCU\Software\Mozilla\NativeMessagingHosts\jp.takets.tcc_local_connector.firefox` に登録します。拡張の読み込みは macOS と同じく `about:debugging` から `firefox-extension/manifest.json` を選択します。owner heartbeat は `%APPDATA%\TCCLocalConnector\BrowserPolicy\` に書きます。削除はレジストリキーとマニフェストを手動で消します（uninstall スクリプトは macOS 用）。
+起動時に Host マニフェストを `%APPDATA%\TCCLocalConnector\NativeMessagingHosts\jp.takets.tcc_local_connector.firefox.json` へ書き、`HKCU\Software\Mozilla\NativeMessagingHosts\jp.takets.tcc_local_connector.firefox` に登録します。拡張の読み込みは `about:debugging` から `firefox-extension/manifest.json` を選択します。owner heartbeat は `%APPDATA%\TCCLocalConnector\BrowserPolicy\` に書きます。削除はレジストリキーとマニフェストを手動で消します（uninstall スクリプトは macOS 用）。
 
 ### 制約
 
@@ -169,15 +169,22 @@ TaskChute Cloud 2 の実行中タスクを取得し、設定したルールに�
 - 未署名 exe のため SmartScreen / Defender の警告が出ることがあります。
 - 単一インスタンス保証はありません（多重起動を防ぎません）。
 
-## Firefox ESR 拡張の導入
+## Firefox 拡張の導入
 
-Firefox ESR を導入してから、アプリをビルドし、一時拡張を読み込みます。Native Messaging Host は `make dev` / `scripts/make-app-bundle.sh` とアプリ起動時に自動登録します。対象ブラウザは Firefox のみです。
+拡張は AMO の unlisted（公開しない自分用の配布）で署名し、通常版の Firefox にインストールします。署名済みの拡張は、一時的なアドオンと違って再起動しても外れません。署名に使う API キーを https://addons.mozilla.org/ja/developers/addon/api/key/ で作り、「JWT 発行者」と「JWT 秘密鍵」を `~/.config/tcc-local-connector/amo-jwt-issuer` と `amo-jwt-secret` に 1 行ずつ置きます（0600）。
 
 ```bash
-make dev
+make bundle
+ditto dist/TCCLocalConnector.app /Applications/TCCLocalConnector.app
+bash scripts/install-launch-agent.sh
+make addon
 ```
 
-Firefox で `about:debugging#/runtime/this-firefox` を開き、「一時的なアドオンを読み込む」から `firefox-extension/manifest.json` を選択します。設定の正本は `~/.config/tcc-local-connector/config.yml` だけです。`browser.block` は `ensure` に記述します。
+`make addon` は `manifest.json` の version の末尾を 1 つ上げ、`scripts/sign-firefox-extension.sh` で署名し、署名済みの XPI を Firefox で開きます。Firefox のインストール確認で「追加」を選び、「プライベートウィンドウでの実行を許可する」にチェックを入れます。署名に失敗すると version は元に戻ります。拡張を直したら `make addon` を流し直します。コネクターを終了しても LaunchAgent が再起動します。
+
+`about:addons` から拡張を無効化・削除すると遮断は効かなくなります（自分で外せる穴として許容しています）。通常版の Firefox はアプリ管理の保護で `distribution/policies.json` を置けないため、ポリシーでの強制インストールは使いません。 [Mozilla の macOS ポリシー設定ガイド](https://firefox-admin-docs.mozilla.org/guides/policies-configuration/)
+
+`~/.config/tcc-local-connector/config.yml` の `ensure` に `browser.block` を記述します。
 
 ```yaml
 rules:
@@ -189,9 +196,12 @@ rules:
         domains: [example.com]
 ```
 
-拡張の権限は `nativeMessaging`、`webRequest`、`webRequestBlocking`、`<all_urls>` です。Host マニフェストは利用者専用のディレクトリ権限 `0700`、ファイル権限 `0600` で登録されます。`safety.dry_run: true` では遮断せず、予定集合の変更を通知だけで確認できます。設定欠損・破損、pause、取得失敗の猶予超過、制御解放、Host の未接続・切断、ポリシーまたは所有者心拍の期限切れでは fail-open とし、最悪 16.000 秒以下で許可へ復帰します。通常ウィンドウだけが対象で、プライベートウィンドウには `incognito=not_allowed` により作用しません。
+拡張の権限は `nativeMessaging`、`webRequest`、`webRequestBlocking`、`tabs`、`<all_urls>` です。通常・プライベート両方のウィンドウで遮断します。遮断対象のタブが開いていれば、遮断画面に切り替えます。Native Messaging Host のマニフェストはコネクター起動時に利用者別に登録されます。
 
-削除は一時拡張を Firefox から削除して `bash scripts/uninstall-firefox-native-host.sh` を実行します。ロールバックは拡張を無効化し、Host マニフェストを削除し、`browser.block` を設定から除去します。旧版へ戻す場合は旧アプリを配置して Host マニフェストを再登録します。一時導入には Mozilla の署名は不要ですが、署名済み拡張の作成・配布は本リポジトリの対象外です。最後に `bash scripts/verify-firefox-extension.sh` を実行し、既存の NDJSON、アプリ制御、通知、`process.*`、`command.run` に回帰がないことを確認します。
+`polling.failure_policy` の既定値は `fail_closed` です。タスク取得の失敗が猶予を超えたら、実行中タスクがない場合の遮断ルールを適用します。一時停止はローカル時間の午前5時を区切りとして1日1回、30分までです。`safety.dry_run: true` では遮断予定を確認できます。Host の切断やハートビートの期限切れでは Firefox の遮断を解除します。
+
+拡張を外すには `about:addons` から削除します。LaunchAgent は `launchctl bootout "gui/$(id -u)/jp.takets.tcc-local-connector"` で停止できます。
+
 # default.on_task_start
 
 `default.on_task_start` は、タスク取得で新規開始を検知したときに、通常ルールより先に一度だけ計画されます。初回取得は空集合との差分として扱います。設定しない場合は空です。
