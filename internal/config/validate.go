@@ -167,6 +167,9 @@ func validateRule(rule *Rule, index int, allowShell bool, ruleIDs, processIDs ma
 			}
 		}
 	}
+	if rule.Match.OverrunRatio != 0 && (rule.Match.OverrunRatio < 1 || rule.Match.OverrunRatio > 100) {
+		errors = append(errors, validation(codeValueOutOfRange, base+".match.overrun_ratio"))
+	}
 	for group, actions := range map[string][]Action{"ensure": rule.Ensure, "on_enter": rule.OnEnter, "on_exit": rule.OnExit} {
 		for i := range actions {
 			errors = append(errors, validateAction(&actions[i], base+"."+group+"["+strconv.Itoa(i)+"]", group, allowShell, processIDs, conflicts, rule.Priority)...)

@@ -33,3 +33,14 @@ rules:
         bundle_ids: [com.tinyspeck.slackmacgap, com.apple.Safari, com.google.Chrome]
       - type: browser.block
         domains: [x.com, twitter.com, bsky.app, discord.com]
+  # 見積もりの 2 倍を超えて計測中のタスクがあれば、タスクを終えるまでアプリを止める。
+  - id: overrun-gate
+    match:
+      overrun_ratio: 2
+    ensure:
+      - type: app.stop
+        bundle_ids: [com.tinyspeck.slackmacgap, com.apple.Safari, com.google.Chrome]
+      - type: notify
+        title: 見積もり超過
+        message: タスクを終えるか、次のタスクを開始してください
+        level: warn

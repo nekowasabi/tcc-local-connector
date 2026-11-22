@@ -61,6 +61,9 @@ type Stop struct {
 type Match struct {
 	TaskNameContains    []string `yaml:"task_name_contains" json:"task_name_contains"`
 	TaskNameNotContains []string `yaml:"task_name_not_contains" json:"task_name_not_contains"`
+	// OverrunRatio, when set, makes the rule match only while a running task's
+	// elapsed time exceeds its TaskChute estimate times this ratio.
+	OverrunRatio float64 `yaml:"overrun_ratio" json:"overrun_ratio"`
 }
 type Action struct {
 	Type           string            `yaml:"type" json:"type"`
