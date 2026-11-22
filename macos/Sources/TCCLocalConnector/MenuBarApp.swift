@@ -2,12 +2,18 @@ import SwiftUI
 import ConnectorCore
 
 @main struct TCCLocalConnectorApp: App {
-    @StateObject private var controller = MenuController()
+    @StateObject private var controller: MenuController
+
+    init() {
+        let controller = MenuController()
+        _controller = StateObject(wrappedValue: controller)
+        // Why: LaunchAgent starts the app even when its menu is never opened.
+        controller.start()
+    }
 
     var body: some Scene {
         MenuBarExtra("TCC Local Connector", systemImage: StatusIcon.symbolName(controller.state)) {
             MenuContent(controller: controller)
-                .task { controller.start() }
         }
     }
 }
@@ -27,8 +33,6 @@ private struct MenuContent: View {
         Button("ログを開く") { controller.perform(.openLog) }
         Divider()
         Button("15分間一時停止") { controller.perform(.pause(Constants.pausePresetShortSeconds)) }
-        Button("1時間一時停止") { controller.perform(.pause(Constants.pausePresetLongSeconds)) }
-        Button("明日の開始時刻まで一時停止") { controller.perform(.pauseUntilNextDayStart) }
         Button("一時停止を解除") { controller.perform(.resume) }
         Divider()
         Button("完全終了…") { controller.perform(.quit) }

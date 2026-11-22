@@ -2,8 +2,8 @@ package state
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/takets/tcc-local-connector/internal/constants"
@@ -37,18 +37,11 @@ func SavePause(path string, pause Pause) error {
 	if pause.CreatedAt.IsZero() {
 		pause.CreatedAt = time.Now().UTC()
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
 	body, err := json.Marshal(pause)
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err = os.WriteFile(tmp, body, constants.StateFileMode); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return WriteFile(path, body)
 }
 func ClearPause(path string) error {
 	err := os.Remove(path)
@@ -56,4 +49,40 @@ func ClearPause(path string) error {
 		return nil
 	}
 	return err
+}
+
+const PauseBudgetFileName = "pause-budget.json"
+
+type pauseBudget struct {
+	Version int    `json:"version"`
+	LastDay string `json:"last_pause_day"`
+}
+
+func LoadPauseDay(path string) (string, error) {
+	body, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var budget pauseBudget
+	if err := json.Unmarshal(body, &budget); err != nil {
+		return "", err
+	}
+	if _, err := time.Parse(time.DateOnly, budget.LastDay); err != nil || budget.Version != constants.PauseStateVersion {
+		return "", errors.New("invalid pause budget")
+	}
+	return budget.LastDay, nil
+}
+
+func SavePauseDay(path, day string) error {
+	if day == "" {
+		return ClearPause(path)
+	}
+	body, err := json.Marshal(pauseBudget{Version: constants.PauseStateVersion, LastDay: day})
+	if err != nil {
+		return err
+	}
+	return WriteFile(path, body)
 }

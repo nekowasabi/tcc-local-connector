@@ -275,6 +275,35 @@ func TestPolicyEffectiveFailOpen(t *testing.T) {
 	}
 }
 
+func TestPolicyEmptiedDiagnosticsAreLoggedOncePerSend(t *testing.T) {
+	now := time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC)
+	for _, reason := range []string{"policy_invalid", "heartbeat_stale"} {
+		t.Run(reason, func(t *testing.T) {
+			dir := t.TempDir()
+			if reason == "heartbeat_stale" {
+				writeStates(t, dir, policyJSON(7, true, false, []string{"example.com"}, []string{"example.com"}, now), heartbeatJSON(now.Add(-time.Minute)))
+			}
+			candidate := readEffectivePolicy(dir, now)
+			state := connectionPolicyState{}
+			var wire, diagnostics bytes.Buffer
+			for range 2 {
+				if err := writePolicyUpdate(&wire, &diagnostics, &state, candidate); err != nil {
+					t.Fatal(err)
+				}
+			}
+			line := strings.Split(strings.TrimSpace(diagnostics.String()), "\n")
+			var entry map[string]string
+			if len(line) != 1 || json.Unmarshal([]byte(line[0]), &entry) != nil ||
+				entry["event"] != "policy_emptied" || entry["reason"] != reason {
+				t.Fatalf("diagnostics = %s", diagnostics.String())
+			}
+			if _, err := readNativeMessage(&wire); err != nil || wire.Len() > 0 {
+				t.Fatalf("expected one frame, got error %v and %d trailing bytes", err, wire.Len())
+			}
+		})
+	}
+}
+
 func TestGenerationWatermarkAndInvalidation(t *testing.T) {
 	state := connectionPolicyState{}
 	active2 := validEffective(2, "two.example")

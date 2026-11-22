@@ -51,6 +51,7 @@ type policyMessage struct {
 type effectivePolicy struct {
 	message policyMessage
 	valid   bool
+	reason  string
 }
 
 type connectionPolicyState struct {
@@ -77,11 +78,11 @@ func run(in io.Reader, out io.Writer, stateDir string, now func() time.Time, pol
 	}
 
 	state := connectionPolicyState{}
-	message, send := pollPolicy(&state, readEffectivePolicy(stateDir, now()))
-	if send {
-		if err := writeNativeMessage(out, message); err != nil {
-			return fmt.Errorf("write initial policy: %w", err)
-		}
+	publish := func() error {
+		return writePolicyUpdate(out, os.Stderr, &state, readEffectivePolicy(stateDir, now()))
+	}
+	if err := publish(); err != nil {
+		return fmt.Errorf("write initial policy: %w", err)
 	}
 
 	// Why: A read goroutine is used instead of polling stdin. Native Messaging keeps
@@ -102,14 +103,25 @@ func run(in io.Reader, out io.Writer, stateDir string, now func() time.Time, pol
 		case err := <-disconnected:
 			return err
 		case <-ticker.C:
-			message, send := pollPolicy(&state, readEffectivePolicy(stateDir, now()))
-			if send {
-				if err := writeNativeMessage(out, message); err != nil {
-					return fmt.Errorf("write policy: %w", err)
-				}
+			if err := publish(); err != nil {
+				return fmt.Errorf("write policy: %w", err)
 			}
 		}
 	}
+}
+
+func writePolicyUpdate(out, diagnostics io.Writer, state *connectionPolicyState, candidate effectivePolicy) error {
+	message, send := pollPolicy(state, candidate)
+	if !send {
+		return nil
+	}
+	if err := writeNativeMessage(out, message); err != nil {
+		return err
+	}
+	if candidate.reason != "" {
+		_ = json.NewEncoder(diagnostics).Encode(map[string]string{"event": "policy_emptied", "reason": candidate.reason})
+	}
+	return nil
 }
 
 func readNativeMessage(reader io.Reader) ([]byte, error) {
@@ -245,11 +257,11 @@ func resolveBrowserStateDir() (string, error) {
 func readEffectivePolicy(stateDir string, now time.Time) effectivePolicy {
 	policy, err := readPolicyFile(filepath.Join(stateDir, constants.BrowserPolicyFileName))
 	if err != nil || validatePolicy(policy, now) != nil {
-		return effectivePolicy{message: emptyPolicyMessage(0)}
+		return effectivePolicy{message: emptyPolicyMessage(0), reason: "policy_invalid"}
 	}
 	heartbeat, err := readOwnerHeartbeatFile(filepath.Join(stateDir, constants.BrowserOwnerHeartbeatFileName))
 	if err != nil || validateOwnerHeartbeat(heartbeat, now) != nil {
-		return effectivePolicy{message: emptyPolicyMessage(0)}
+		return effectivePolicy{message: emptyPolicyMessage(0), reason: "heartbeat_stale"}
 	}
 	message := policyMessage{
 		Type: "policy", Version: constants.BrowserPolicyVersion, Generation: policy.Generation,

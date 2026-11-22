@@ -14,3 +14,8 @@ internal/ledger/.tmp
 windows/**/bin/
 windows/**/obj/
 release/
+
+# formal verification (TLC jar / counterexamples)
+formal/*/.tools/
+formal/*/out/
+firefox-extension/.amo-upload-uuid

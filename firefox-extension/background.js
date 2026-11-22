@@ -154,6 +154,21 @@ function createBackground(browserApi, timerApi = globalThis) {
     blockedDomains = new Set(policy.domains);
     lastGeneration = policy.generation;
     lastAcceptedDomains = [...policy.domains];
+    return redirectBlockedTabs().catch(() => {});
+  }
+
+  async function redirectBlockedTabs() {
+    const tabs = await browserApi.tabs.query({});
+    await Promise.allSettled(tabs.map(async ({id, url}) => {
+      if (!Number.isInteger(id)) {
+        return;
+      }
+      // The active policy may have changed while the tab query was pending.
+      const {redirectUrl} = onBeforeRequest({type: "main_frame", url});
+      if (redirectUrl) {
+        await browserApi.tabs.update(id, {url: redirectUrl});
+      }
+    }));
   }
 
   function scheduleReconnect() {
@@ -212,7 +227,7 @@ function createBackground(browserApi, timerApi = globalThis) {
   }
 
   function onBeforeRequest(details) {
-    if (!details || details.type !== "main_frame" || details.incognito === true ||
+    if (!details || details.type !== "main_frame" ||
         typeof details.url !== "string") {
       return {};
     }

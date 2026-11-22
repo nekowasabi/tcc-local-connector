@@ -81,27 +81,33 @@ type Action struct {
 }
 
 func defaults() Config {
-	return Config{Version: constants.ConfigSchemaVersion, Polling: Polling{IntervalSeconds: constants.DefaultPollIntervalSeconds, TimeoutSeconds: constants.DefaultPollTimeoutSeconds, FailureGraceSeconds: constants.DefaultFailureGraceSeconds, FailurePolicy: "release_controls"}, TaskSource: TaskSource{Type: "tcc2_mcp", Args: []string{"mcp"}}, Safety: Safety{DryRun: true}, Logging: Logging{Level: constants.DefaultLogLevel, RetainDays: constants.DefaultLogRetainDays}, Default: Default{OnTaskStart: []Action{}}, Stop: Stop{OnTaskEnd: []Action{}}, Rules: []Rule{}}
+	return Config{Version: constants.ConfigSchemaVersion, Polling: Polling{IntervalSeconds: constants.DefaultPollIntervalSeconds, TimeoutSeconds: constants.DefaultPollTimeoutSeconds, FailureGraceSeconds: constants.DefaultFailureGraceSeconds, FailurePolicy: "fail_closed"}, TaskSource: TaskSource{Type: "tcc2_mcp", Args: []string{"mcp"}}, Safety: Safety{DryRun: true}, Logging: Logging{Level: constants.DefaultLogLevel, RetainDays: constants.DefaultLogRetainDays}, Default: Default{OnTaskStart: []Action{}}, Stop: Stop{OnTaskEnd: []Action{}}, Rules: []Rule{}}
 }
 
 func Load(path string) (*Config, []ValidationError, error) {
+	cfg, _, errs, err := LoadWithSource(path)
+	return cfg, errs, err
+}
+
+// LoadWithSource returns the exact bytes validated from the checked descriptor.
+func LoadWithSource(path string) (*Config, []byte, []ValidationError, error) {
 	f, err := CheckPermissions(path)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	defer f.Close()
 	payload, err := io.ReadAll(f)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	cfg := defaults()
 	decoder := yaml.NewDecoder(bytes.NewReader(payload))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&cfg); err != nil {
 		if isUnknownFieldError(err) {
-			return nil, []ValidationError{{Code: codeUnknownField, Message: "configuration contains unknown field"}}, nil
+			return nil, nil, []ValidationError{{Code: codeUnknownField, Message: "configuration contains unknown field"}}, nil
 		}
-		return nil, []ValidationError{{Code: codeParseError, Message: "configuration syntax is invalid"}}, nil
+		return nil, nil, []ValidationError{{Code: codeParseError, Message: "configuration syntax is invalid"}}, nil
 	}
 	if cfg.TaskSource.Executable == "" {
 		cfg.TaskSource.Executable = defaultTaskSourceExecutable()
@@ -109,14 +115,14 @@ func Load(path string) (*Config, []ValidationError, error) {
 	if cfg.Safety.AllowShell {
 		info, statErr := f.Stat()
 		if statErr != nil || info.Mode().Perm()&constants.ConfigStrictModeMask != 0 {
-			return nil, nil, fmt.Errorf("%w: shell-enabled configuration requires private mode", ErrInsecurePermissions)
+			return nil, nil, nil, fmt.Errorf("%w: shell-enabled configuration requires private mode", ErrInsecurePermissions)
 		}
 	}
 	validated, validationErrors := Validate(&cfg)
 	if len(validationErrors) > 0 {
-		return nil, validationErrors, nil
+		return nil, nil, validationErrors, nil
 	}
-	return validated, nil, nil
+	return validated, payload, nil, nil
 }
 
 func isUnknownFieldError(err error) bool {

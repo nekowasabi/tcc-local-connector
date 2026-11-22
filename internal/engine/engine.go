@@ -26,6 +26,7 @@ import (
 )
 
 type Deps struct {
+	SkipConfigSnapshot bool
 	ConfigPath         string
 	Emit               func(string, any)
 	Logger             *logging.Logger
@@ -48,6 +49,8 @@ type ActionResult struct {
 	Detail   string `json:"detail,omitempty"`
 }
 type Engine struct {
+	skipConfigSnapshot bool
+
 	mu         sync.Mutex
 	configPath string
 	cfg        *config.Config
@@ -90,7 +93,12 @@ func New(deps Deps) *Engine {
 		logger = logging.New(deps.LogWriter, level)
 	}
 	logger.Rotate(stateDir, retainDays, time.Now())
-	engine := &Engine{configPath: path, machine: state.NewMachine(), status: Status{State: state.StateStarting, RunningTasks: []TaskView{}}, pausePath: filepath.Join(stateDir, constants.PauseFileName), emit: deps.Emit, logger: logger, taskIDs: map[string]struct{}{}}
+	failurePath := filepath.Join(stateDir, state.FailureFileName)
+	firstFailure, err := state.LoadFailure(failurePath)
+	if err != nil {
+		logger.Log(logging.Entry{Level: "warn", Component: "engine", Event: "failure_state_load_failed", Message: err.Error()})
+	}
+	engine := &Engine{skipConfigSnapshot: deps.SkipConfigSnapshot, configPath: path, machine: state.NewPersistentMachine(failurePath, firstFailure), status: Status{State: state.StateStarting, RunningTasks: []TaskView{}}, pausePath: filepath.Join(stateDir, constants.PauseFileName), emit: deps.Emit, logger: logger, taskIDs: map[string]struct{}{}}
 	engine.policyPath = deps.BrowserPolicyPath
 	if engine.policyPath == "" {
 		engine.policyPath = defaultBrowserPolicyPath(path)
@@ -219,44 +227,76 @@ func (e *Engine) SetDryRun(dryRun bool) error {
 	if e.cfg == nil {
 		return errors.New("config_error")
 	}
-	e.cfg.Safety.DryRun = dryRun
+	if dryRun && !e.cfg.Safety.DryRun && e.status.CycleID > 0 {
+		return errors.New("cannot enable dry-run while enforcement is running")
+	}
+	cfg := *e.cfg
+	cfg.Safety.DryRun = dryRun
+	e.cfg = &cfg
 	return nil
 }
 
 func (e *Engine) Reload() ReloadResult {
 	result := e.LoadConfig()
-	if result.OK {
+	if result.Applied {
 		e.cycleNow()
 	}
 	return result
 }
 
 func (e *Engine) LoadConfig() ReloadResult {
-	cfg, errs, err := config.Load(e.configPath)
-	e.mu.Lock()
-	if err != nil {
-		e.mu.Unlock()
-		_ = e.publishEmptyBrowserPolicy()
-		return ReloadResult{OK: false}
+	cfg, source, errs, loadErr := config.LoadWithSource(e.configPath)
+	invalid := loadErr != nil || len(errs) > 0
+	if loadErr != nil {
+		code := "io_error"
+		if errors.Is(loadErr, os.ErrNotExist) {
+			code = "config_not_found"
+		} else if errors.Is(loadErr, config.ErrInsecurePermissions) {
+			code = "insecure_permissions"
+		}
+		errs = []config.ValidationError{{Code: code, Message: loadErr.Error()}}
 	}
-	if len(errs) > 0 {
+
+	e.mu.Lock()
+	starting := e.cfg == nil
+	snapshotPath := filepath.Join(filepath.Dir(e.pausePath), constants.LastGoodConfig)
+	if invalid && starting && !e.skipConfigSnapshot {
+		cfg, _, _ = config.Load(snapshotPath)
+	}
+	if cfg == nil {
+		if starting {
+			e.machine.Transition("config_error", time.Now(), 0)
+			e.status.State = e.machine.Current()
+		}
 		e.mu.Unlock()
-		_ = e.publishEmptyBrowserPolicy()
-		// Why: Reuse event.notify so startup and manual reload errors share the resident app's warning path.
+		if starting {
+			_ = e.publishEmptyBrowserPolicy()
+		}
 		e.emitEvent("notify", configErrorNotification(errs))
-		return ReloadResult{OK: false, Errors: errs}
+		return ReloadResult{Errors: errs}
+	}
+	if !invalid && !e.skipConfigSnapshot {
+		if err := state.WriteFile(snapshotPath, source); err != nil {
+			e.logger.Log(logging.Entry{Level: "warn", Component: "engine", Event: "config_snapshot_failed", Message: err.Error()})
+		}
 	}
 	e.cfg = cfg
 	e.machine.Transition("reload_ok", time.Now(), 0)
 	e.status.State = e.machine.Current()
-	result := ReloadResult{OK: true, Applied: true, Errors: []config.ValidationError{}}
-	// Why: Capture the status before unlocking instead of calling Snapshot while locked.
-	// Snapshot acquires the same mutex and would deadlock the reload path.
 	current := e.status
 	e.mu.Unlock()
-	_ = e.publishEmptyBrowserPolicy()
+
+	if starting {
+		_ = e.publishEmptyBrowserPolicy()
+	}
+	if invalid {
+		e.emitEvent("notify", configErrorNotification(errs))
+	}
 	go e.emitEvent("state_changed", current)
-	return result
+	if errs == nil {
+		errs = []config.ValidationError{}
+	}
+	return ReloadResult{OK: !invalid, Applied: true, Errors: errs}
 }
 
 func configErrorNotification(validationErrors []config.ValidationError) map[string]any {
@@ -317,21 +357,52 @@ func (e *Engine) RunCycleNow(ctx context.Context) (int64, error) {
 	e.logger.Log(logging.Entry{Level: "info", Component: "engine", Event: "fetch_taskchute"})
 	result, err := tcc2.FetchTaskChute(fetchCtx, cfg.TaskSource.Executable, cfg.TaskSource.Args, cfg.TaskSource.ViewID)
 	e.mu.Lock()
+	if e.status.State == state.StatePaused {
+		e.mu.Unlock()
+		return id, errors.New("paused")
+	}
 	if err != nil {
-		e.machine.Transition("failure", time.Now(), time.Duration(cfg.Polling.FailureGraceSeconds)*time.Second)
-		transition := e.machine.Transition("grace_expired", time.Now(), time.Duration(cfg.Polling.FailureGraceSeconds)*time.Second)
+		grace := time.Duration(cfg.Polling.FailureGraceSeconds) * time.Second
+		e.recordFetchTransition("failure", grace)
+		expiryEvent := "fail_closed"
+		if cfg.Polling.FailurePolicy == "release_controls" {
+			expiryEvent = "grace_expired"
+		}
+		transition := e.machine.Transition(expiryEvent, time.Now(), grace)
 		e.status.State = e.machine.Current()
 		e.status.ParseOK = false
 		e.status.LastError = err.Error()
-		current := e.status
+		status := e.status
 		e.mu.Unlock()
-		if transition.ReleaseControls {
+		switch transition.Code {
+		case "grace_expired":
 			_ = e.publishEmptyBrowserPolicy()
-		}
-		go e.emitEvent("state_changed", current)
-		if transition.ReleaseControls {
-			go e.emitEvent("plan", rules.Plan{CycleID: id, Actions: []rules.PlannedAction{}, EnforceStopBundleIDs: []string{}})
-			go e.emitEvent("notify", map[string]any{"level": "warn", "code": "grace_expired", "title": "制御を解除しました", "message": "タスク取得の失敗猶予が期限切れになりました", "at": time.Now().UTC()})
+			if transition.GraceJustExpired {
+				e.logger.Log(logging.Entry{Level: "warn", Component: "engine", Event: "controls_released", Reason: "grace_expired"})
+			}
+			e.emitEvent("state_changed", status)
+			e.emitEvent("plan", rules.Plan{CycleID: id, Actions: []rules.PlannedAction{}, EnforceStopBundleIDs: []string{}})
+			e.emitEvent("notify", map[string]any{"level": "warn", "code": "grace_expired", "title": "制御を解除しました", "message": "タスク取得の失敗猶予が期限切れになりました", "at": time.Now().UTC()})
+		case "fail_closed":
+			evaluation := rules.Evaluate(cfg, nil)
+			plan, _ := rules.BuildPlan(id, evaluation, evaluation)
+			// Why: A failed poll can enforce restrictions without running unrelated ensure or lifecycle actions.
+			actions := plan.Actions[:0]
+			for _, action := range plan.Actions {
+				if action.Kind == "app.stop" {
+					actions = append(actions, action)
+				}
+			}
+			plan.Actions = actions
+			plan.DryRun = cfg.Safety.DryRun
+			if transition.GraceJustExpired {
+				e.logger.Log(logging.Entry{Level: "warn", Component: "engine", Event: "fail_closed", Reason: "grace_expired"})
+			}
+			e.applyBrowserPolicy(plan.DryRun, rules.BuildBrowserPolicy(evaluation))
+			e.emitEvent("state_changed", status)
+			e.emitEvent("plan", publicPlan(plan))
+		default:
+			e.emitEvent("state_changed", status)
 		}
 		return id, err
 	}
@@ -350,7 +421,7 @@ func (e *Engine) RunCycleNow(ctx context.Context) (int64, error) {
 	} else {
 		e.status.LastError = snapshotErr.Error()
 	}
-	e.machine.Transition("success", time.Now(), 0)
+	e.recordFetchTransition("success", 0)
 	e.status.State = e.machine.Current()
 	previous := e.previous
 	current := rules.Evaluate(cfg, result.RunningTasks)
@@ -372,15 +443,7 @@ func (e *Engine) RunCycleNow(ctx context.Context) (int64, error) {
 	plannedDomains := rules.BuildBrowserPolicy(current)
 	status := e.status
 	e.mu.Unlock()
-	if cfg.Safety.DryRun {
-		if err := e.publishBrowserPolicy(false, true, []string{}, plannedDomains); err != nil {
-			e.logger.Log(logging.Entry{Level: "error", Component: "engine", Event: "browser_policy_publish_failed", Message: err.Error()})
-		}
-	} else if len(plannedDomains) == 0 {
-		_ = e.publishEmptyBrowserPolicy()
-	} else if err := e.publishBrowserPolicy(true, false, plannedDomains, plannedDomains); err != nil {
-		e.logger.Log(logging.Entry{Level: "error", Component: "engine", Event: "browser_policy_publish_failed", Message: err.Error()})
-	}
+	e.applyBrowserPolicy(plan.DryRun, plannedDomains)
 	e.emitEvent("state_changed", status)
 	frontendDispatched := false
 	for _, action := range plan.Actions {
@@ -411,6 +474,24 @@ func (e *Engine) RunCycleNow(ctx context.Context) (int64, error) {
 		})
 	}
 	return id, nil
+}
+
+func (e *Engine) recordFetchTransition(event string, grace time.Duration) {
+	if transition := e.machine.Transition(event, time.Now(), grace); transition.PersistenceError != nil {
+		e.logger.Log(logging.Entry{Level: "warn", Component: "engine", Event: "failure_state_save_failed", Message: transition.PersistenceError.Error()})
+	}
+}
+
+func (e *Engine) applyBrowserPolicy(dryRun bool, plannedDomains []string) {
+	if dryRun {
+		if err := e.publishBrowserPolicy(false, true, []string{}, plannedDomains); err != nil {
+			e.logger.Log(logging.Entry{Level: "error", Component: "engine", Event: "browser_policy_publish_failed", Message: err.Error()})
+		}
+	} else if len(plannedDomains) == 0 {
+		_ = e.publishEmptyBrowserPolicy()
+	} else if err := e.publishBrowserPolicy(true, false, plannedDomains, plannedDomains); err != nil {
+		e.logger.Log(logging.Entry{Level: "error", Component: "engine", Event: "browser_policy_publish_failed", Message: err.Error()})
+	}
 }
 
 var taskIDPattern = regexp.MustCompile(constants.TaskIDPattern)
@@ -611,23 +692,69 @@ func truncateOutput(output []byte) string {
 	}
 	return string(output[:constants.CommandRunMaxOutputBytes])
 }
+
+var (
+	ErrPauseDeadline = errors.New("pause deadline must be within 30 minutes")
+	ErrPauseUsed     = errors.New("pause is already active or was used today")
+)
+
 func (e *Engine) Pause(until time.Time) error {
-	if until.Before(time.Now()) {
-		return errors.New("invalid pause time")
-	}
-	if err := state.SavePause(e.pausePath, state.Pause{Until: until, Reason: "user_requested"}); err != nil {
+	current, err := e.beginPause(until)
+	if err != nil {
+		e.logger.Log(logging.Entry{Level: "warn", Component: "engine", Event: "paused", Status: "rejected", Message: err.Error()})
 		return err
 	}
-	e.mu.Lock()
-	e.machine.Transition("pause", time.Now(), 0)
-	e.status.State = e.machine.Current()
-	current := e.status
-	e.mu.Unlock()
+	e.logger.Log(logging.Entry{Level: "info", Component: "engine", Event: "paused", Status: "accepted"})
 	policyErr := e.publishEmptyBrowserPolicy()
 	go e.emitEvent("state_changed", current)
 	go e.emitEvent("plan", rules.Plan{CycleID: current.CycleID, Actions: []rules.PlannedAction{}, EnforceStopBundleIDs: []string{}})
 	return policyErr
 }
+
+func (e *Engine) beginPause(until time.Time) (Status, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	now := time.Now()
+	if !until.After(now) || until.After(now.Add(constants.PauseMaxSeconds*time.Second)) {
+		return Status{}, ErrPauseDeadline
+	}
+	path := filepath.Join(filepath.Dir(e.pausePath), state.PauseBudgetFileName)
+	lastDay, err := state.LoadPauseDay(path)
+	if err != nil {
+		return Status{}, err
+	}
+	day := pauseDay(now)
+	if lastDay == day {
+		return Status{}, ErrPauseUsed
+	}
+	pause, err := state.LoadPause(e.pausePath)
+	if err != nil {
+		return Status{}, err
+	}
+	if !pause.Until.IsZero() && !pause.Expired(now) {
+		return Status{}, ErrPauseUsed
+	}
+	// Why: Reserve the day before saving the pause so a restart cannot grant an uncounted pause.
+	if err := state.SavePauseDay(path, day); err != nil {
+		return Status{}, err
+	}
+	if err := state.SavePause(e.pausePath, state.Pause{Until: until, Reason: "user_requested", CreatedAt: now.UTC()}); err != nil {
+		return Status{}, errors.Join(err, state.SavePauseDay(path, lastDay))
+	}
+
+	e.machine.Transition("pause", now, 0)
+	e.status.State = e.machine.Current()
+	return e.status, nil
+}
+
+func pauseDay(now time.Time) string {
+	year, month, day := now.Date()
+	if now.Before(time.Date(year, month, day, constants.PauseNextDayStartHour, 0, 0, 0, now.Location())) {
+		now = now.AddDate(0, 0, -1)
+	}
+	return now.Format(time.DateOnly)
+}
+
 func (e *Engine) Resume() error {
 	e.mu.Lock()
 	if e.status.State != state.StatePaused {

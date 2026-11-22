@@ -73,6 +73,7 @@ function harness() {
       },
     },
     webRequest: {onBeforeRequest: requests},
+    tabs: {async query() { return []; }},
   };
   const timerApi = {
     setTimeout(callback, milliseconds) {
@@ -232,7 +233,40 @@ test("host matching uses exact or dot-boundary subdomain matches", () => {
   assert.equal(isBlockedHost("example.com.evil.test", domains), false);
 });
 
-test("redirect is synchronous, main_frame-only, normal-window-only, and avoids extension URLs", () => {
+test("policy adoption redirects open matching tabs in both window types", async () => {
+  const {background, browserApi} = harness();
+  browserApi.tabs.query = async (query) => {
+    assert.deepEqual(query, {});
+    return [
+      {id: 1, url: "https://example.com/private", incognito: true},
+      {id: 2, url: "https://unrelated.example/"},
+      {id: 3, url: "https://sub.example.com"},
+      {url: "https://example.com"},
+    ];
+  };
+  const updates = [];
+  browserApi.tabs.update = async (id, value) => updates.push([id, value]);
+  await background.handleNativeMessage(policy());
+  assert.deepEqual(updates, [
+    [1, {url: "moz-extension://extension-id/blocked.html?host=example.com"}],
+    [3, {url: "moz-extension://extension-id/blocked.html?host=sub.example.com"}],
+  ]);
+});
+
+test("policy cleared during a tab query leaves those tabs alone", async () => {
+  const {background, browserApi} = harness();
+  let finishQuery;
+  browserApi.tabs.query = () => new Promise((resolve) => { finishQuery = resolve; });
+  const updates = [];
+  browserApi.tabs.update = (...args) => updates.push(args);
+  const pending = background.handleNativeMessage(policy());
+  background.handleNativeMessage(policy({enforce: false, domains: []}));
+  finishQuery([{id: 1, url: "https://example.com"}]);
+  await pending;
+  assert.deepEqual(updates, []);
+});
+
+test("redirect is synchronous, main_frame-only, also applies in private windows, and avoids extension URLs", () => {
   const setup = harness();
   setup.background.start();
   setup.ports[0].onMessage.emit(policy());
@@ -240,7 +274,9 @@ test("redirect is synchronous, main_frame-only, normal-window-only, and avoids e
     redirectUrl: "moz-extension://extension-id/blocked.html?host=sub.example.com",
   });
   assert.deepEqual(setup.background.onBeforeRequest({type: "image", url: "https://example.com/image.png"}), {});
-  assert.deepEqual(setup.background.onBeforeRequest({type: "main_frame", url: "https://example.com", incognito: true}), {});
+  assert.deepEqual(setup.background.onBeforeRequest({type: "main_frame", url: "https://example.com", incognito: true}), {
+    redirectUrl: "moz-extension://extension-id/blocked.html?host=example.com",
+  });
   assert.deepEqual(setup.background.onBeforeRequest({type: "main_frame", url: "moz-extension://extension-id/blocked.html?host=example.com"}), {});
   assert.deepEqual(setup.requests.listeners[0]({type: "main_frame", url: "https://example.com"}), {
     redirectUrl: "moz-extension://extension-id/blocked.html?host=example.com",

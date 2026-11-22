@@ -285,6 +285,48 @@ func TestEngine_ReleaseControlsPublishesEmptyPolicy(t *testing.T) {
 	}
 }
 
+func TestEngineRestartKeepsFirstFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	deps := Deps{BrowserPolicyStore: &memoryPolicyStore{}}
+	failurePath := filepath.Join(home, constants.StateDirRelPath, state.FailureFileName)
+	fake := createActiveFakeMCPScript(t)
+	cfg := browserTestConfig(fake, false)
+	cfg.Polling.FailureGraceSeconds = 60
+	cfg.TaskSource.Executable = filepath.Join(home, "missing-tcc2")
+
+	first := New(deps)
+	first.cfg = cfg
+	if _, err := first.RunCycleNow(context.Background()); err == nil || first.Snapshot().State != state.StateDegraded {
+		t.Fatalf("first failure: state = %s, error = %v", first.Snapshot().State, err)
+	}
+	startedAt, err := state.LoadFailure(failurePath)
+	if err != nil || startedAt.IsZero() {
+		t.Fatalf("persisted failure start = %v, error = %v", startedAt, err)
+	}
+	if info, err := os.Stat(failurePath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("failure file = %v, error = %v", info, err)
+	}
+
+	// Age the stored timestamp to cover the grace boundary without waiting for it.
+	if err := state.SaveFailure(failurePath, startedAt.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	restarted := New(deps)
+	restarted.cfg = cfg
+	if _, err := restarted.RunCycleNow(context.Background()); err == nil || restarted.Snapshot().State != state.StateReleased {
+		t.Fatalf("failure after restart: state = %s, error = %v", restarted.Snapshot().State, err)
+	}
+
+	cfg.TaskSource.Executable = fake
+	if _, err := restarted.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(failurePath); !os.IsNotExist(err) {
+		t.Fatalf("successful fetch did not clear the failure file: %v", err)
+	}
+}
+
 func TestReportActionsKeepsBrowserPolicyWhenFrontendActionFails(t *testing.T) {
 	fake := createActiveFakeMCPScript(t)
 	policyPath := filepath.Join(t.TempDir(), constants.BrowserPolicyFileName)
@@ -328,6 +370,7 @@ func TestReportActionsKeepsBrowserPolicyWhenFrontendActionFails(t *testing.T) {
 }
 
 func TestEngine_PauseAndResumePublishEmptyPolicy(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	policyPath := filepath.Join(t.TempDir(), constants.BrowserPolicyFileName)
 	engine := New(Deps{ConfigPath: filepath.Join(t.TempDir(), "config.yml"), BrowserPolicyPath: policyPath})
 	if err := engine.Pause(time.Now().Add(time.Minute)); err != nil {
@@ -347,6 +390,7 @@ func TestEngine_PauseAndResumePublishEmptyPolicy(t *testing.T) {
 }
 
 func TestEngine_ReloadAndResumeRestoreEnsureWithoutWaitingInterval(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	fake := createActiveFakeMCPScript(t)
 	configPath := filepath.Join(t.TempDir(), "config.yml")
 	writeEnsureConfig(t, configPath, fake, 3600)
@@ -652,6 +696,7 @@ func TestEngine_BrowserPolicyRepublishesAfterFiveSeconds(t *testing.T) {
 }
 
 func TestEngine_ReloadReturnsErrorForInvalidConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	configPath := filepath.Join(t.TempDir(), "invalid-config.yml")
 	// required field `task_source.executable` is missing.
 	if err := os.WriteFile(configPath, []byte(`polling: {interval_seconds: 1}`), 0o600); err != nil {
@@ -702,6 +747,95 @@ func TestEngine_ReloadInvalidConfigEmitsNotification(t *testing.T) {
 	}
 }
 
+func TestEngineRefusesLoosening(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+	policyPath := filepath.Join(dir, constants.BrowserPolicyFileName)
+	writeEnsureConfig(t, cfgPath, createActiveFakeMCPScript(t), 60)
+	e := New(Deps{ConfigPath: cfgPath, BrowserPolicyPath: policyPath})
+	if result := e.Reload(); !result.OK {
+		t.Fatalf("initial reload = %+v", result)
+	}
+	before := readBrowserPolicy(t, policyPath)
+	if !before.Enforce {
+		t.Fatal("test must start with enforcement active")
+	}
+	if err := e.SetDryRun(true); err == nil {
+		t.Fatal("SetDryRun(true) must refuse to weaken enforcement")
+	}
+	if err := os.WriteFile(cfgPath, []byte("unknown_field: true"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if result := e.Reload(); result.OK || result.Applied {
+		t.Fatalf("invalid reload = %+v", result)
+	}
+	if err := os.Rename(cfgPath, cfgPath+".bad"); err != nil {
+		t.Fatal(err)
+	}
+	if result := e.Reload(); result.OK || result.Applied {
+		t.Fatalf("missing configuration reload = %+v", result)
+	}
+	if got := readBrowserPolicy(t, policyPath); !reflect.DeepEqual(got, before) {
+		t.Fatalf("reload changed the enforced policy: %+v", got)
+	}
+	if _, err := e.RunCycleNow(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := readBrowserPolicy(t, policyPath); !got.Enforce || got.DryRun {
+		t.Fatalf("invalid reload or SetDryRun weakened the next cycle: %+v", got)
+	}
+}
+
+func TestEngineStartsWithLastGoodConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+	policyPath := filepath.Join(dir, constants.BrowserPolicyFileName)
+	backupPath := filepath.Join(home, constants.StateDirRelPath, constants.LastGoodConfig)
+	writeEnsureConfig(t, cfgPath, createActiveFakeMCPScript(t), 60)
+	original, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notifications := make(chan string, 4)
+	deps := Deps{ConfigPath: cfgPath, BrowserPolicyPath: policyPath, Emit: func(event string, data any) {
+		if event == "notify" {
+			notifications <- data.(map[string]any)["code"].(string)
+		}
+	}}
+	if result := New(deps).Reload(); !result.OK {
+		t.Fatalf("initial reload = %+v", result)
+	}
+	saved, err := os.ReadFile(backupPath)
+	if err != nil || !bytes.Equal(saved, original) {
+		t.Fatalf("saved config differs: %v", err)
+	}
+	if info, err := os.Stat(backupPath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("backup file = %v, error = %v", info, err)
+	}
+
+	if err := os.WriteFile(cfgPath, []byte("unknown_field: true"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	restarted := New(deps)
+	if result := restarted.Reload(); result.OK || !result.Applied || len(result.Errors) == 0 {
+		t.Fatalf("fallback reload = %+v", result)
+	}
+	if policy := readBrowserPolicy(t, policyPath); !policy.Enforce || !reflect.DeepEqual(policy.Domains, []string{"example.com"}) {
+		t.Fatalf("fallback did not enforce the last valid policy: %+v", policy)
+	}
+	select {
+	case code := <-notifications:
+		if code != "config_error" {
+			t.Fatalf("notification code = %q", code)
+		}
+	default:
+		t.Fatal("fallback did not report the invalid config")
+	}
+}
+
 func TestEngine_PauseAndResumeLifecycle(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -723,6 +857,38 @@ func TestEngine_PauseAndResumeLifecycle(t *testing.T) {
 	}
 	if got := engine.Snapshot().State; got != state.StateFetching {
 		t.Fatalf("state after resume = %q, want %q", got, state.StateFetching)
+	}
+}
+
+func TestEnginePauseIsBoundedOncePerDay(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	deps := Deps{BrowserPolicyStore: &memoryPolicyStore{}}
+	e := New(deps)
+	if err := e.Pause(time.Now().Add(time.Hour)); !errors.Is(err, ErrPauseDeadline) {
+		t.Fatalf("long pause error = %v", err)
+	}
+	if err := e.Pause(time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Resume(); err != nil {
+		t.Fatal(err)
+	}
+	restarted := New(deps)
+	if err := restarted.Pause(time.Now().Add(time.Minute)); !errors.Is(err, ErrPauseUsed) {
+		t.Fatalf("second pause after restart = %v", err)
+	}
+	path := filepath.Join(home, constants.StateDirRelPath, state.PauseBudgetFileName)
+	if err := state.SavePauseDay(path, pauseDay(time.Now().AddDate(0, 0, -1))); err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.Pause(time.Now().Add(time.Minute)); err != nil {
+		t.Fatalf("pause on the next day: %v", err)
+	}
+
+	cutoff := time.Date(2026, time.November, 22, constants.PauseNextDayStartHour, 0, 0, 0, time.Local)
+	if pauseDay(cutoff.Add(-time.Second)) != "2026-11-21" || pauseDay(cutoff) != "2026-11-22" {
+		t.Fatal("pause day does not switch at the start hour")
 	}
 }
 

@@ -25,3 +25,11 @@ rules:
         level: info
       - type: browser.block
         domains: [example.com, xn--bcher-kva.example]
+  - id: sns-gate
+    match:
+      task_name_not_contains: ["SNS /"]
+    ensure:
+      - type: app.stop
+        bundle_ids: [com.tinyspeck.slackmacgap, com.apple.Safari, com.google.Chrome]
+      - type: browser.block
+        domains: [x.com, twitter.com, bsky.app, discord.com]

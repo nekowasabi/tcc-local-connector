@@ -78,7 +78,7 @@ func Validate(cfg *Config) (*Config, []ValidationError) {
 	if cfg.Polling.TimeoutSeconds >= cfg.Polling.IntervalSeconds {
 		errors = append(errors, validation(codeTimeoutExceedsInterval, "polling.timeout_seconds"))
 	}
-	if cfg.Polling.FailurePolicy != "release_controls" {
+	if !oneOf(cfg.Polling.FailurePolicy, "fail_closed", "release_controls") {
 		errors = append(errors, validation(codeUnsupportedValue, "polling.failure_policy"))
 	}
 	if cfg.Safety.AllowExternalProcessControl || cfg.Safety.AllowForceTerminate {

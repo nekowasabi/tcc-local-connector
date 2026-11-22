@@ -43,10 +43,12 @@ const (
 	NotifyTitleMaxRunes            = 200
 	NotifyMessageMaxRunes          = 500
 
+	LastGoodConfig = "last-good-config.yml"
+
 	PauseStateVersion       = 1
 	LedgerVersion           = 1
 	PauseMinSeconds         = 60
-	PauseMaxSeconds         = 86400
+	PauseMaxSeconds         = 1800
 	PausePresetShortSeconds = 900
 	PausePresetLongSeconds  = 3600
 	PauseNextDayStartHour   = 5
