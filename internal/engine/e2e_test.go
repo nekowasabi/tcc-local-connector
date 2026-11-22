@@ -23,6 +23,7 @@ func TestEndToEnd(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build backend: %v\n%s", err, output)
 	}
+	t.Setenv("HOME", t.TempDir())
 	fake, err := filepath.Abs(filepath.Join("testdata", "fake-tcc2.sh"))
 	if err != nil {
 		t.Fatal(err)

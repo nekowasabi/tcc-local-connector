@@ -74,6 +74,7 @@ func TestParseOptionsRejectsConflictingRunOnceModes(t *testing.T) {
 }
 
 func TestRunOnceEmitsJSON(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	path := writeRunConfig(t)
 	var output bytes.Buffer
 	if err := runOnce(path, &output, true); err != nil {
@@ -101,6 +102,7 @@ func TestRunOnceEmitsJSON(t *testing.T) {
 }
 
 func TestRunBackendCommands(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	path := writeRunConfig(t)
 	for _, command := range []string{
 		"validate", "config-test", "config-paths", "status", "pause", "resume", "refresh-now", "run-once",
@@ -139,6 +141,7 @@ func TestRunRejectsInvalidArguments(t *testing.T) {
 }
 
 func TestRunReportsInvalidConfiguration(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	path := filepath.Join(t.TempDir(), "invalid.yml")
 	if err := os.WriteFile(path, []byte("version: 2\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -157,7 +160,7 @@ func writeRunConfig(t *testing.T) string {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "config.yml")
-	content := []byte("version: 2\ntask_source:\n  executable: " + fake + "\npolling:\n  timeout_seconds: 1\ndefault:\n  on_task_start:\n    - type: notify\n      title: Default one\n      message: First\n    - type: notify\n      title: Default two\n      message: Second\nrules:\n  - id: active\n    match:\n      task_name_contains: [E2E]\n    ensure:\n      - type: notify\n        title: Rule\n        message: Third\n")
+	content := []byte("version: 2\ntask_source:\n  executable: " + fake + "\npolling:\n  timeout_seconds: 1\nsafety:\n  dry_run: false\ndefault:\n  on_task_start:\n    - type: notify\n      title: Default one\n      message: First\n    - type: notify\n      title: Default two\n      message: Second\nrules:\n  - id: active\n    match:\n      task_name_contains: [E2E]\n    ensure:\n      - type: notify\n        title: Rule\n        message: Third\n")
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
 	}

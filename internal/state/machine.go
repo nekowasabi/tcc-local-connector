@@ -18,10 +18,12 @@ const (
 )
 
 type Transition struct {
-	State           State  `json:"state"`
-	Code            string `json:"code,omitempty"`
-	ReleaseControls bool   `json:"release_controls"`
-	Reevaluate      bool   `json:"reevaluate"`
+	State            State  `json:"state"`
+	Code             string `json:"code,omitempty"`
+	ReleaseControls  bool   `json:"release_controls"`
+	Reevaluate       bool   `json:"reevaluate"`
+	PersistenceError error  `json:"-"`
+	GraceJustExpired bool   `json:"-"`
 }
 type Machine struct {
 	mu           sync.RWMutex
@@ -29,9 +31,17 @@ type Machine struct {
 	failures     int
 	lastSuccess  time.Time
 	firstFailure time.Time
+	failurePath  string
+	savedFailure time.Time
+	expiryLogged string
 }
 
-func NewMachine() *Machine        { return &Machine{state: StateStarting} }
+func NewMachine() *Machine { return NewPersistentMachine("", time.Time{}) }
+
+func NewPersistentMachine(path string, firstFailure time.Time) *Machine {
+	return &Machine{state: StateStarting, failurePath: path, firstFailure: firstFailure, savedFailure: firstFailure}
+}
+
 func (m *Machine) Current() State { m.mu.RLock(); defer m.mu.RUnlock(); return m.state }
 func (m *Machine) Transition(event string, now time.Time, grace time.Duration) Transition {
 	m.mu.Lock()
@@ -55,6 +65,7 @@ func (m *Machine) Transition(event string, now time.Time, grace time.Duration) T
 		m.failures = 0
 		m.lastSuccess = now
 		m.firstFailure = time.Time{}
+		m.expiryLogged = ""
 		next.Code = code
 	case "failure":
 		if m.state != StatePaused && m.state != StateConfigError {
@@ -64,11 +75,15 @@ func (m *Machine) Transition(event string, now time.Time, grace time.Duration) T
 				m.firstFailure = now
 			}
 		}
-	case "grace_expired":
+	case "fail_closed", "grace_expired":
 		if m.state == StateDegraded && !m.firstFailure.IsZero() && now.After(m.firstFailure.Add(grace)) {
-			m.state = StateReleased
-			next.Code = "grace_expired"
-			next.ReleaseControls = true
+			next.Code = event
+			next.GraceJustExpired = m.expiryLogged != event
+			m.expiryLogged = event
+			if event == "grace_expired" {
+				m.state = StateReleased
+				next.ReleaseControls = true
+			}
 		}
 	case "pause":
 		if m.state != StateConfigError {
@@ -89,6 +104,16 @@ func (m *Machine) Transition(event string, now time.Time, grace time.Duration) T
 		}
 	case "wake":
 		next.Reevaluate = true
+	}
+	if m.failurePath != "" && (event == "failure" || event == "success") && !m.savedFailure.Equal(m.firstFailure) {
+		if m.firstFailure.IsZero() {
+			next.PersistenceError = ClearFailure(m.failurePath)
+		} else {
+			next.PersistenceError = SaveFailure(m.failurePath, m.firstFailure)
+		}
+		if next.PersistenceError == nil {
+			m.savedFailure = m.firstFailure
+		}
 	}
 	next.State = m.state
 	return next

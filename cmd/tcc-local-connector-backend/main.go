@@ -40,7 +40,7 @@ func run(args []string, output io.Writer) error {
 		return runOnce(options.configPath, output, options.dryRun)
 	}
 	if options.command != "serve" {
-		backend := engine.New(engine.Deps{ConfigPath: options.configPath})
+		backend := engine.New(engine.Deps{ConfigPath: options.configPath, SkipConfigSnapshot: true})
 		if result := backend.Reload(); !result.OK {
 			return fmt.Errorf("configuration is invalid: %v", result.Errors)
 		}
@@ -132,8 +132,8 @@ func parseOptions(args []string) (options, error) {
 	if command == "serve" && !*stdio {
 		return options{}, errors.New("--stdio is required")
 	}
-	if command == "pause" && (*duration < 1 || *duration > 86400) {
-		return options{}, errors.New("--duration-seconds must be between 1 and 86400")
+	if command == "pause" && (*duration < 1 || *duration > constants.PauseMaxSeconds) {
+		return options{}, fmt.Errorf("--duration-seconds must be between 1 and %d", constants.PauseMaxSeconds)
 	}
 	if command != "run-once" && (*apply || *dryRun) {
 		return options{}, errors.New("--apply and --dry-run are only valid for run-once")
@@ -165,7 +165,7 @@ func testConfig(path string, output io.Writer) error {
 }
 
 func runOnce(path string, output io.Writer, dryRun bool) error {
-	backend := engine.New(engine.Deps{ConfigPath: path})
+	backend := engine.New(engine.Deps{ConfigPath: path, SkipConfigSnapshot: true})
 	result := backend.LoadConfig()
 	if !result.OK {
 		return fmt.Errorf("configuration is invalid: %v", result.Errors)
