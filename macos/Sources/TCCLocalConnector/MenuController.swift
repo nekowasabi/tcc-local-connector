@@ -4,7 +4,7 @@ import Foundation
 
 enum MenuAction: Equatable {
     case refresh, reloadConfig, openConfig, openLog
-    case pause(Int), pauseUntilNextDayStart, resume, quit, showStatus, showWarning
+    case pause(Int), resume, quit, showStatus, showWarning
 }
 
 protocol MenuBackend: Sendable {
@@ -63,7 +63,6 @@ final class MenuController: ObservableObject {
         case .openConfig: openConfig()
         case .openLog: openLog()
         case .pause(let seconds): pause(for: seconds)
-        case .pauseUntilNextDayStart: pauseUntilNextDayStart()
         case .resume: resume()
         case .quit: quit()
         case .showStatus, .showWarning: synchronize()
@@ -88,20 +87,7 @@ final class MenuController: ObservableObject {
     }
 
     func pause(for seconds: Int) {
-        heartbeat.stop()
         send("pause", params: .object(["duration_seconds": .number(Double(seconds))]))
-    }
-
-    func pauseUntilNextDayStart() {
-        let calendar = Calendar.current
-        let now = Date()
-        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: now),
-              let deadline = calendar.date(bySettingHour: Constants.pauseNextDayStartHour, minute: 0, second: 0, of: tomorrow) else {
-            recentWarning = "一時停止の期限を計算できませんでした"
-            return
-        }
-        heartbeat.stop()
-        send("pause", params: .object(["until": .string(ISO8601DateFormatter().string(from: deadline))]))
     }
 
     func resume() {
@@ -151,13 +137,14 @@ final class MenuController: ObservableObject {
     private func synchronize() {
         Task {
             do {
-                try await backend.send(method: "status", params: nil)
-                try await backend.send(method: "config_paths", params: nil)
+                // Why: Consume the previous poll so an in-flight status cannot clear the heartbeat.
                 let receivedHealthyStatus = await consumeBackendMessages()
                 state = await backend.state
                 if !receivedHealthyStatus || state != .running {
                     heartbeat.stop()
                 }
+                try await backend.send(method: "status", params: nil)
+                try await backend.send(method: "config_paths", params: nil)
             } catch {
                 heartbeat.stop()
                 state = .backendDown
@@ -186,13 +173,15 @@ final class MenuController: ObservableObject {
             recentWarning = notification.message.isEmpty ? notification.code : notification.message
         }
         for response in await backend.takeResponses() {
+            // Why: A pause denial or plan acknowledgement says nothing about whether the backend is enforcing.
+            let isStatus = response.id == "status" || response.id?.hasPrefix("menu-status-") == true
             if let error = response.error {
-                responseFailed = true
+                responseFailed = responseFailed || isStatus
                 recentWarning = error.message.isEmpty ? error.code : error.message
                 continue
             }
             guard let result = response.result, let payload = try? JSONEncoder().encode(result) else {
-                responseFailed = true
+                responseFailed = responseFailed || isStatus
                 continue
             }
             if let decoded = try? JSONDecoder().decode(StatusPayload.self, from: payload) {
@@ -205,7 +194,7 @@ final class MenuController: ObservableObject {
                 }
             } else if let decoded = try? JSONDecoder().decode([String: String].self, from: payload), decoded["config"] != nil {
                 paths = decoded
-            } else {
+            } else if isStatus {
                 responseFailed = true
             }
         }

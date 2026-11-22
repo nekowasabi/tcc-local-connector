@@ -104,7 +104,7 @@ final class BrowserPolicyHeartbeatTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: heartbeat.heartbeatURL.path))
     }
 
-    func testReloadKeepsHeartbeatAndPauseDeletesIt() async throws {
+    func testReloadAndDeniedPauseKeepHeartbeatUntilPausedStatus() async throws {
         let root = try makeTemporaryDirectory()
         let heartbeat = BrowserPolicyHeartbeat(applicationSupportURL: root)
         let backend = HeartbeatMenuBackend()
@@ -122,7 +122,21 @@ final class BrowserPolicyHeartbeatTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: heartbeat.heartbeatURL.path))
 
         controller.perform(.pause(900))
-        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: heartbeat.heartbeatURL.path))
+        await backend.enqueueResponse(try response(
+            #"{"version":1,"id":"menu-pause-1","error":{"code":"pause_rejected","message":"already used"}}"#
+        ))
+        await backend.enqueueResponse(try response(
+            #"{"version":1,"id":"menu-report_actions-2","result":{"accepted":1,"ignored":0}}"#
+        ))
+        await backend.enqueueResponse(try healthyStatusResponse())
+        await controller.processPendingMessagesForTesting()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: heartbeat.heartbeatURL.path))
+
+        await backend.enqueueResponse(try response(
+            #"{"version":1,"id":"menu-status-3","result":{"state":"paused","cycle_id":7,"parse_ok":true,"running_tasks":[],"last_error":null}}"#
+        ))
+        await controller.processPendingMessagesForTesting()
         XCTAssertFalse(FileManager.default.fileExists(atPath: heartbeat.heartbeatURL.path))
     }
 
@@ -194,7 +208,7 @@ final class BrowserPolicyHeartbeatTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: heartbeat.heartbeatURL.path))
     }
 
-    func testStatusStopPauseAndQuitDeleteHeartbeatWithoutRegeneration() async throws {
+    func testStatusStopAndQuitDeleteHeartbeatWithoutRegeneration() async throws {
         let root = try makeTemporaryDirectory()
         let heartbeat = BrowserPolicyHeartbeat(applicationSupportURL: root)
         let backend = HeartbeatMenuBackend()
@@ -209,11 +223,7 @@ final class BrowserPolicyHeartbeatTests: XCTestCase {
 
         await backend.enqueueResponse(try healthyStatusResponse())
         await controller.processPendingMessagesForTesting()
-        controller.perform(.pause(60))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: heartbeat.heartbeatURL.path))
-
-        await backend.enqueueResponse(try healthyStatusResponse())
-        await controller.processPendingMessagesForTesting()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: heartbeat.heartbeatURL.path))
         controller.perform(.quit)
         heartbeat.refreshForTesting()
         try await Task.sleep(for: .milliseconds(50))

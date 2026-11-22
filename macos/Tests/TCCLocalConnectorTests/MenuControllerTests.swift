@@ -15,8 +15,6 @@ final class MenuControllerTests: XCTestCase {
             .openConfig,
             .openLog,
             .pause(Constants.pausePresetShortSeconds),
-            .pause(Constants.pausePresetLongSeconds),
-            .pauseUntilNextDayStart,
             .resume,
             .showStatus,
             .showWarning

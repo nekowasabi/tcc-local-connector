@@ -52,8 +52,8 @@ public actor BackendClient {
 
 	public func send(method: String, params: JSONValue? = nil) throws {
 		nextRequestSequence += 1
-		let request = params.map { BackendRequest(id: "menu-\(nextRequestSequence)", method: method, params: $0) }
-			?? BackendRequest(id: "menu-\(nextRequestSequence)", method: method)
+		let request = params.map { BackendRequest(id: "menu-\(method)-\(nextRequestSequence)", method: method, params: $0) }
+			?? BackendRequest(id: "menu-\(method)-\(nextRequestSequence)", method: method)
 		try send(request)
 	}
 
