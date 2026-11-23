@@ -1,10 +1,16 @@
-.PHONY: all build-go build-swift build-firefox-extension addon bundle dev build-go-windows win-build win-test win-release win-clean
+.PHONY: all stop-app build-go build-swift build-firefox-extension addon bundle dev build-go-windows win-build win-test win-release win-clean
 
 ifeq ($(PC),wsl)
 all: win-release
 else
-all: build-go build-swift bundle
+all: build-go build-swift stop-app bundle
+	open dist/TCCLocalConnector.app
 endif
+
+# Why: bundle は動作中の .app を消して作り直すため、先に止めてから再起動する
+stop-app:
+	-pkill -x TCCLocalConnector
+	-pkill -x tcc-local-connector-backend
 
 build-go:
 	go build ./...
