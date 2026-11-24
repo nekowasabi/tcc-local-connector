@@ -434,6 +434,57 @@ func TestEngine_ReloadAndResumeRestoreEnsureWithoutWaitingInterval(t *testing.T)
 	}
 }
 
+func TestReloadIfConfigChangedAppliesEditedRules(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	fake := createActiveFakeMCPScript(t)
+	configPath := filepath.Join(t.TempDir(), "config.yml")
+	noRules := fmt.Sprintf("version: 2\ntask_source:\n  type: tcc2_mcp\n  executable: %s\n  args: [mcp]\npolling:\n  interval_seconds: 3600\n  timeout_seconds: 20\nrules: []\n", fake)
+	if err := os.WriteFile(configPath, []byte(noRules), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var plans []rules.Plan
+	notifies := 0
+	engine := New(Deps{ConfigPath: configPath, BrowserPolicyPath: filepath.Join(t.TempDir(), constants.BrowserPolicyFileName), Emit: func(event string, value any) {
+		switch event {
+		case "plan":
+			plans = append(plans, value.(rules.Plan))
+		case "notify":
+			notifies++
+		}
+	}})
+	if result := engine.LoadConfig(); !result.OK {
+		t.Fatalf("LoadConfig() = %#v", result)
+	}
+	if engine.reloadIfConfigChanged() {
+		t.Fatal("reloadIfConfigChanged() reloaded an unchanged file")
+	}
+
+	writeEnsureConfig(t, configPath, fake, 3600)
+	if !engine.reloadIfConfigChanged() {
+		t.Fatal("reloadIfConfigChanged() ignored an edited file")
+	}
+	if _, err := engine.RunCycleNow(context.Background()); err != nil {
+		t.Fatalf("RunCycleNow() = %v", err)
+	}
+	if len(plans) == 0 || !reflect.DeepEqual(plans[len(plans)-1].EnforceStopBundleIDs, []string{"com.example.App"}) {
+		t.Fatalf("plans after edit = %#v", plans)
+	}
+	if engine.reloadIfConfigChanged() {
+		t.Fatal("reloadIfConfigChanged() reloaded the same edit twice")
+	}
+
+	if err := os.WriteFile(configPath, []byte("version: [\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	notifies = 0
+	if !engine.reloadIfConfigChanged() || engine.reloadIfConfigChanged() {
+		t.Fatal("invalid edit should reload exactly once")
+	}
+	if notifies != 1 {
+		t.Fatalf("notifies for invalid edit = %d, want 1", notifies)
+	}
+}
+
 type failOncePolicyStore struct {
 	store    *browserpolicy.Store
 	failNext bool

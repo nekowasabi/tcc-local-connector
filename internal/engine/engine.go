@@ -72,6 +72,9 @@ type Engine struct {
 	policyPath string
 	policyMode browserPolicyState
 	dryRunFP   string
+	// Why: raw config.yml bytes last passed to LoadConfig, so the poll loop
+	// reloads only on a real edit and an invalid file is not re-reported every tick.
+	configSource []byte
 }
 
 type browserPolicyState struct {
@@ -180,6 +183,7 @@ func (e *Engine) Run(ctx context.Context) {
 		case <-policyTicker.C:
 			e.republishBrowserPolicy()
 		case now := <-timer.C:
+			e.reloadIfConfigChanged()
 			if e.detectWake(now) {
 				tcc2.InvalidateUserCache()
 				e.logger.Log(logging.Entry{Level: "info", Component: "engine", Event: "wake_detected"})
@@ -244,6 +248,27 @@ func (e *Engine) Reload() ReloadResult {
 	return result
 }
 
+// Why: edits to config.yml must apply without the user pressing reload; the
+// caller runs a cycle right after, so this calls LoadConfig rather than Reload.
+func (e *Engine) reloadIfConfigChanged() bool {
+	data, err := os.ReadFile(e.configPath)
+	if err != nil {
+		return false
+	}
+	e.mu.Lock()
+	unchanged := bytes.Equal(data, e.configSource)
+	if !unchanged {
+		e.configSource = data
+	}
+	e.mu.Unlock()
+	if unchanged {
+		return false
+	}
+	e.logger.Log(logging.Entry{Level: "info", Component: "engine", Event: "config_changed"})
+	e.LoadConfig()
+	return true
+}
+
 func (e *Engine) LoadConfig() ReloadResult {
 	cfg, source, errs, loadErr := config.LoadWithSource(e.configPath)
 	invalid := loadErr != nil || len(errs) > 0
@@ -258,6 +283,9 @@ func (e *Engine) LoadConfig() ReloadResult {
 	}
 
 	e.mu.Lock()
+	if source != nil {
+		e.configSource = source
+	}
 	starting := e.cfg == nil
 	snapshotPath := filepath.Join(filepath.Dir(e.pausePath), constants.LastGoodConfig)
 	if invalid && starting && !e.skipConfigSnapshot {

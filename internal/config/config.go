@@ -92,7 +92,8 @@ func Load(path string) (*Config, []ValidationError, error) {
 	return cfg, errs, err
 }
 
-// LoadWithSource returns the exact bytes validated from the checked descriptor.
+// LoadWithSource returns the exact bytes read from the checked descriptor, also
+// when they fail to parse or validate, so callers can tell whether the file changed.
 func LoadWithSource(path string) (*Config, []byte, []ValidationError, error) {
 	f, err := CheckPermissions(path)
 	if err != nil {
@@ -108,9 +109,9 @@ func LoadWithSource(path string) (*Config, []byte, []ValidationError, error) {
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&cfg); err != nil {
 		if isUnknownFieldError(err) {
-			return nil, nil, []ValidationError{{Code: codeUnknownField, Message: "configuration contains unknown field"}}, nil
+			return nil, payload, []ValidationError{{Code: codeUnknownField, Message: "configuration contains unknown field"}}, nil
 		}
-		return nil, nil, []ValidationError{{Code: codeParseError, Message: "configuration syntax is invalid"}}, nil
+		return nil, payload, []ValidationError{{Code: codeParseError, Message: "configuration syntax is invalid"}}, nil
 	}
 	if cfg.TaskSource.Executable == "" {
 		cfg.TaskSource.Executable = defaultTaskSourceExecutable()
@@ -123,7 +124,7 @@ func LoadWithSource(path string) (*Config, []byte, []ValidationError, error) {
 	}
 	validated, validationErrors := Validate(&cfg)
 	if len(validationErrors) > 0 {
-		return nil, nil, validationErrors, nil
+		return nil, payload, validationErrors, nil
 	}
 	return validated, payload, nil, nil
 }
