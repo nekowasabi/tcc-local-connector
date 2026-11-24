@@ -8,7 +8,7 @@ else
 all: build-go build-swift stop-app bundle
 	rm -rf /Applications/TCCLocalConnector.app
 	ditto dist/TCCLocalConnector.app /Applications/TCCLocalConnector.app
-	launchctl bootstrap gui/$$(id -u) $(LAUNCH_AGENT)
+	bash scripts/install-launch-agent.sh
 endif
 
 LAUNCH_AGENT := $(HOME)/Library/LaunchAgents/jp.takets.tcc-local-connector.plist
