@@ -191,9 +191,7 @@ func FetchTaskChute(ctx context.Context, executable string, args []string, viewI
 			location = loaded
 		}
 	}
-	now := time.Now().In(location)
-	end := now.Format("2006-01-02")
-	start := now.AddDate(0, 0, -1).Format("2006-01-02")
+	start, end := fetchRange(time.Now().In(location))
 	arguments := map[string]any{"start_date": start, "end_date": end}
 	if viewID != nil {
 		arguments["view_id"] = *viewID
@@ -207,6 +205,14 @@ func FetchTaskChute(ctx context.Context, executable string, args []string, viewI
 		parsed.Warnings = append(parsed.Warnings, "user_info_fallback")
 	}
 	return parsed, err
+}
+
+// Why: TaskChute's "Start of Day" can move the day boundary away from midnight
+// (e.g. -05:00 makes 19:00 the start of tomorrow's date), so a task started in
+// the evening is filed under tomorrow. Asking for yesterday..tomorrow covers any
+// boundary within a day of midnight.
+func fetchRange(now time.Time) (string, string) {
+	return now.AddDate(0, 0, -1).Format("2006-01-02"), now.AddDate(0, 0, 1).Format("2006-01-02")
 }
 func joinText(result ToolResult) string {
 	var text string
