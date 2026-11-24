@@ -9,9 +9,9 @@ protocol TerminalNotifierRunning {
 }
 
 enum LaunchLockNotification {
-    static let title = "Locked"
+    static let title = "ロック中"
     static func body(bundleID: String) -> String {
-        "\(bundleID) is locked while a matching task is running"
+        "\(bundleID) は今のタスクのルールで止めています"
     }
 }
 

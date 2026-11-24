@@ -3,10 +3,17 @@ import ConnectorCore
 @testable import TCCLocalConnector
 
 final class MacPlanExecutorTests: XCTestCase {
+    private var lockNotifier = FakeLockNotifier()
+
+    override func setUp() {
+        super.setUp()
+        lockNotifier = FakeLockNotifier()
+    }
+
     func testStartApp_LaunchesWhenNotRunning() async {
         let workspace = FakeLaunchWorkspace()
         let action = PlanAction(type: "app.start", id: "1-1", bundleID: "com.example.app")
-        let executor = MacPlanExecutor(workspace: workspace, startTimeoutSeconds: 0.1)
+        let executor = MacPlanExecutor(workspace: workspace, lockNotifier: lockNotifier, startTimeoutSeconds: 0.1)
 
         let outcomes = await executor.execute([action], dryRun: false)
 
@@ -18,7 +25,7 @@ final class MacPlanExecutorTests: XCTestCase {
         let app = FakeRunningApplication(bundleID: "com.example.app")
         let workspace = FakeLaunchWorkspace(runningApplications: ["com.example.app": [app]])
         let action = PlanAction(type: "app.start", id: "1-1", bundleID: "com.example.app")
-        let executor = MacPlanExecutor(workspace: workspace, startTimeoutSeconds: 0.1)
+        let executor = MacPlanExecutor(workspace: workspace, lockNotifier: lockNotifier, startTimeoutSeconds: 0.1)
 
         let outcomes = await executor.execute([action], dryRun: false)
 
@@ -29,7 +36,7 @@ final class MacPlanExecutorTests: XCTestCase {
     func testStartApp_FailedAppNotFound() async {
         let workspace = FakeLaunchWorkspace()
         let action = PlanAction(type: "app.start", id: "1-1", bundleID: "missing.bundle")
-        let executor = MacPlanExecutor(workspace: workspace, startTimeoutSeconds: 0.1)
+        let executor = MacPlanExecutor(workspace: workspace, lockNotifier: lockNotifier, startTimeoutSeconds: 0.1)
 
         let outcomes = await executor.execute([action], dryRun: false)
 
@@ -39,7 +46,7 @@ final class MacPlanExecutorTests: XCTestCase {
     func testStartApp_Timeout() async {
         let action = PlanAction(type: "app.start", id: "1-1", bundleID: "com.example.app")
         let workspace = FakeLaunchWorkspace(openShouldTimeout: true)
-        let executor = MacPlanExecutor(workspace: workspace, startTimeoutSeconds: 0.1)
+        let executor = MacPlanExecutor(workspace: workspace, lockNotifier: lockNotifier, startTimeoutSeconds: 0.1)
 
         let outcomes = await executor.execute([action], dryRun: false)
 
@@ -48,11 +55,12 @@ final class MacPlanExecutorTests: XCTestCase {
 
     func testStopApp_SkipsWhenNotRunning() async {
         let action = PlanAction(type: "app.stop", id: "1-1", bundleID: "com.example.app")
-        let executor = MacPlanExecutor(startTimeoutSeconds: 0.1)
+        let executor = MacPlanExecutor(lockNotifier: lockNotifier, startTimeoutSeconds: 0.1)
 
         let outcomes = await executor.execute([action], dryRun: false)
 
         XCTAssertEqual(outcomes, [.skipped])
+        XCTAssertEqual(lockNotifier.bundleIDs, [])
     }
 
     func testStopApp_GracefulTermination() async {
@@ -60,12 +68,13 @@ final class MacPlanExecutorTests: XCTestCase {
         app.shouldTerminate = true
         let workspace = FakeLaunchWorkspace(runningApplications: ["com.example.app": [app]])
         let action = PlanAction(type: "app.stop", id: "1-1", bundleID: "com.example.app", graceSeconds: 1)
-        let executor = MacPlanExecutor(workspace: workspace, startTimeoutSeconds: 0.1)
+        let executor = MacPlanExecutor(workspace: workspace, lockNotifier: lockNotifier, startTimeoutSeconds: 0.1)
 
         let outcomes = await executor.execute([action], dryRun: false)
 
         XCTAssertEqual(outcomes, [.accepted])
         XCTAssertTrue(app.wasTerminated)
+        XCTAssertEqual(lockNotifier.bundleIDs, ["com.example.app"])
     }
 
     func testStopApp_AttemptsLaterTargetAfterFirstQuitRefused() async {
@@ -81,13 +90,14 @@ final class MacPlanExecutorTests: XCTestCase {
             PlanAction(type: "app.stop", id: "1-1", bundleID: "com.tinyspeck.slackmacgap", graceSeconds: 1),
             PlanAction(type: "app.stop", id: "1-2", bundleID: "com.amazon.Lassen", graceSeconds: 1),
         ]
-        let executor = MacPlanExecutor(workspace: workspace, startTimeoutSeconds: 0.1)
+        let executor = MacPlanExecutor(workspace: workspace, lockNotifier: lockNotifier, startTimeoutSeconds: 0.1)
 
         let outcomes = await executor.execute(actions, dryRun: false)
 
         XCTAssertEqual(outcomes, [.rejected("quit_refused"), .accepted])
         XCTAssertEqual(workspace.terminatedBundleIDs, ["com.tinyspeck.slackmacgap", "com.amazon.Lassen"])
         XCTAssertTrue(kindle.wasTerminated)
+        XCTAssertEqual(lockNotifier.bundleIDs, ["com.amazon.Lassen"])
     }
 
     func testStopApp_RefusedNoRetry() async {
@@ -95,17 +105,18 @@ final class MacPlanExecutorTests: XCTestCase {
         app.shouldTerminate = false
         let workspace = FakeLaunchWorkspace(runningApplications: ["com.example.app": [app]])
         let action = PlanAction(type: "app.stop", id: "1-1", bundleID: "com.example.app", graceSeconds: 1)
-        let executor = MacPlanExecutor(workspace: workspace, startTimeoutSeconds: 0.1)
+        let executor = MacPlanExecutor(workspace: workspace, lockNotifier: lockNotifier, startTimeoutSeconds: 0.1)
 
         let outcomes = await executor.execute([action], dryRun: false)
 
         XCTAssertEqual(outcomes, [.rejected("quit_refused")])
         XCTAssertFalse(app.wasTerminated)
+        XCTAssertEqual(lockNotifier.bundleIDs, [])
     }
 
     func testNotify_AlwaysAccepted() async {
         let action = PlanAction(type: "notify", id: "1-1", title: "テスト", message: "通知")
-        let executor = MacPlanExecutor(startTimeoutSeconds: 0.1)
+        let executor = MacPlanExecutor(lockNotifier: lockNotifier, startTimeoutSeconds: 0.1)
 
         let outcomes = await executor.execute([action], dryRun: false)
 
@@ -116,7 +127,7 @@ final class MacPlanExecutorTests: XCTestCase {
         let workspace = FakeLaunchWorkspace(openShouldDelay: true)
         let actionStart = PlanAction(type: "app.start", id: "1-1", bundleID: "com.example.app")
         let actionStop = PlanAction(type: "app.stop", id: "1-2", bundleID: "com.example.app")
-        let executor = MacPlanExecutor(workspace: workspace, startTimeoutSeconds: 0.1)
+        let executor = MacPlanExecutor(workspace: workspace, lockNotifier: lockNotifier, startTimeoutSeconds: 0.1)
 
         let outcomes = await executor.execute([actionStart, actionStop], dryRun: false)
 
@@ -132,7 +143,7 @@ final class MacPlanExecutorTests: XCTestCase {
             PlanAction(type: "unsupported", id: "1-4")
         ]
 
-        let executor = MacPlanExecutor(workspace: workspace, startTimeoutSeconds: 0.1)
+        let executor = MacPlanExecutor(workspace: workspace, lockNotifier: lockNotifier, startTimeoutSeconds: 0.1)
         let outcomes = await executor.execute(actions, dryRun: true)
 
         XCTAssertEqual(outcomes, [.skipped, .skipped, .skipped, .skipped])
@@ -217,5 +228,13 @@ private final class FakeLaunchWorkspace: LaunchWorkspace, @unchecked Sendable {
     func terminate(bundleID: String) {
         terminatedBundleIDs.append(bundleID)
         appStore[bundleID]?.forEach { _ = $0.terminate() }
+    }
+}
+
+private final class FakeLockNotifier: LaunchLockNotifier {
+    private(set) var bundleIDs: [String] = []
+
+    func notifyLocked(bundleID: String) {
+        bundleIDs.append(bundleID)
     }
 }
