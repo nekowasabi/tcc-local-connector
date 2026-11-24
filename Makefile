@@ -3,12 +3,21 @@
 ifeq ($(PC),wsl)
 all: win-release
 else
+# Why: 常駐は LaunchAgent（KeepAlive）が /Applications 版を起こす。dist 版を open すると
+#      KeepAlive が起こした方と合わせて 2 つ動くので、/Applications を更新して LaunchAgent から起動し直す
 all: build-go build-swift stop-app bundle
-	open dist/TCCLocalConnector.app
+	rm -rf /Applications/TCCLocalConnector.app
+	ditto dist/TCCLocalConnector.app /Applications/TCCLocalConnector.app
+	launchctl bootstrap gui/$$(id -u) $(LAUNCH_AGENT)
 endif
 
-# Why: bundle は動作中の .app を消して作り直すため、先に止めてから再起動する
+LAUNCH_AGENT := $(HOME)/Library/LaunchAgents/jp.takets.tcc-local-connector.plist
+
+# Why: bundle は動作中の .app を消して作り直すため、先に止めてから再起動する。
+#      pkill だけだと KeepAlive が作業途中の不完全な .app を起動し、署名検証で落ちたまま止まる
+#      （OS_REASON_CODESIGNING）ので、LaunchAgent ごと外しておく
 stop-app:
+	-launchctl bootout gui/$$(id -u)/jp.takets.tcc-local-connector
 	-pkill -x TCCLocalConnector
 	-pkill -x tcc-local-connector-backend
 
