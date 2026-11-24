@@ -45,12 +45,15 @@ type Logging struct {
 	RetainDays int    `yaml:"retain_days" json:"retain_days"`
 }
 type Rule struct {
-	ID       string   `yaml:"id" json:"id"`
-	Priority int      `yaml:"priority" json:"priority"`
-	Match    Match    `yaml:"match" json:"match"`
-	Ensure   []Action `yaml:"ensure" json:"ensure"`
-	OnEnter  []Action `yaml:"on_enter" json:"on_enter"`
-	OnExit   []Action `yaml:"on_exit" json:"on_exit"`
+	ID string `yaml:"id" json:"id"`
+	// Description is a free-text note for the reader; YAML comments do not survive
+	// the dotfiles sync (it re-dumps the file), so the note lives in a field.
+	Description string   `yaml:"description" json:"description"`
+	Priority    int      `yaml:"priority" json:"priority"`
+	Match       Match    `yaml:"match" json:"match"`
+	Ensure      []Action `yaml:"ensure" json:"ensure"`
+	OnEnter     []Action `yaml:"on_enter" json:"on_enter"`
+	OnExit      []Action `yaml:"on_exit" json:"on_exit"`
 }
 type Default struct {
 	OnTaskStart []Action `yaml:"on_task_start" json:"on_task_start"`
