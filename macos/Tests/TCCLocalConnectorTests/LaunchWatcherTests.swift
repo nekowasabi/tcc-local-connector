@@ -22,8 +22,8 @@ final class LaunchWatcherTests: XCTestCase {
 
         XCTAssertTrue(launchedApp.didTerminate)
         XCTAssertEqual(lockNotifier.bundleIDs, ["com.example.app"])
-        XCTAssertEqual(LaunchLockNotification.title, "Locked")
-        XCTAssertTrue(LaunchLockNotification.body(bundleID: "com.example.app").contains("locked"))
+        XCTAssertEqual(LaunchLockNotification.title, "ロック中")
+        XCTAssertTrue(LaunchLockNotification.body(bundleID: "com.example.app").contains("止めています"))
     }
 
     func testTerminalNotifierLockNotifier_PostsLockedSystemNotification() {
@@ -37,7 +37,7 @@ final class LaunchWatcherTests: XCTestCase {
             "-title", LaunchLockNotification.title,
             "-message", LaunchLockNotification.body(bundleID: "com.example.app"),
         ])
-        XCTAssertTrue((runner.invocations.first ?? []).contains { $0.contains("locked") })
+        XCTAssertTrue((runner.invocations.first ?? []).contains { $0.contains("止めています") })
     }
 
     func testLaunchWatcher_NonMatchingLaunchDoesNotTerminateOrNotify() {

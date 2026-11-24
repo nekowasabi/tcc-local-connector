@@ -58,12 +58,15 @@ struct DefaultLaunchWorkspace: LaunchWorkspace {
 final class MacPlanExecutor: PlanExecutor, @unchecked Sendable {
     private let workspace: LaunchWorkspace
     private let startTimeoutSeconds: TimeInterval
+    private let lockNotifier: LaunchLockNotifier
 
     init(
         workspace: LaunchWorkspace = DefaultLaunchWorkspace(),
+        lockNotifier: LaunchLockNotifier = TerminalNotifierLockNotifier(),
         startTimeoutSeconds: TimeInterval = TimeInterval(Constants.backendRequestTimeoutSeconds)
     ) {
         self.workspace = workspace
+        self.lockNotifier = lockNotifier
         self.startTimeoutSeconds = startTimeoutSeconds
     }
 
@@ -125,6 +128,8 @@ final class MacPlanExecutor: PlanExecutor, @unchecked Sendable {
         let deadline = Date().addingTimeInterval(TimeInterval(grace))
         while Date() < deadline {
             if workspace.runningApplications(bundleID: bundleID).isEmpty {
+                // Why: Notify only on an actual quit; skipped (not running) repeats every poll and would spam.
+                lockNotifier.notifyLocked(bundleID: bundleID)
                 return .accepted
             }
             do {
