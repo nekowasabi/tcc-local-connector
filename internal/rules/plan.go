@@ -54,15 +54,15 @@ func buildPlan(cycleID int64, defaultActions, stopActions []config.Action, previ
 	ruleCandidates := []PlannedAction{}
 	for _, id := range sortedRuleIDs(current.ActiveRuleIDs) {
 		rule := current.Rules[id]
-		ruleCandidates = append(ruleCandidates, actions(rule.Ensure, "ensure", rule.Priority, "rules")...)
+		ruleCandidates = append(ruleCandidates, stampStopNotice(actions(rule.Ensure, "ensure", rule.Priority, "rules"), rule)...)
 		if !previous.ActiveRuleIDs[id] {
-			ruleCandidates = append(ruleCandidates, actions(rule.OnEnter, "on_enter", rule.Priority, "rules")...)
+			ruleCandidates = append(ruleCandidates, stampStopNotice(actions(rule.OnEnter, "on_enter", rule.Priority, "rules"), rule)...)
 		}
 	}
 	for _, id := range sortedRuleIDs(previous.ActiveRuleIDs) {
 		if !current.ActiveRuleIDs[id] {
 			rule := previous.Rules[id]
-			ruleCandidates = append(ruleCandidates, actions(rule.OnExit, "on_exit", rule.Priority, "rules")...)
+			ruleCandidates = append(ruleCandidates, stampStopNotice(actions(rule.OnExit, "on_exit", rule.Priority, "rules"), rule)...)
 		}
 	}
 	rules, conflicts := dedupe(ruleCandidates)
@@ -88,6 +88,31 @@ func buildPlan(cycleID int64, defaultActions, stopActions []config.Action, previ
 	sort.Strings(stops)
 	return Plan{CycleID: cycleID, Actions: selected, EnforceStopBundleIDs: stops}, conflicts
 }
+// Why: dedupe keeps one app.stop per bundle, so stamping the rule here makes
+// the lock notification name exactly the one rule that won, never a list.
+func stampStopNotice(output []PlannedAction, rule config.Rule) []PlannedAction {
+	for index := range output {
+		if output[index].Kind == "app.stop" {
+			output[index].Title = "ロック中: " + rule.ID
+			output[index].Message = shortNotice(rule.Description)
+		}
+	}
+	return output
+}
+
+// noticeMaxRunes fits a macOS banner (about two lines) so the text is read
+// before the banner fades; the full description stays in config.yml.
+const noticeMaxRunes = 40
+
+func shortNotice(description string) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(description), "\n")
+	runes := []rune(strings.TrimSpace(line))
+	if len(runes) <= noticeMaxRunes {
+		return string(runes)
+	}
+	return string(runes[:noticeMaxRunes-1]) + "…"
+}
+
 func actions(values []config.Action, reason string, priority int, phase string) []PlannedAction {
 	output := []PlannedAction{}
 	for _, value := range values {

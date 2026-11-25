@@ -199,7 +199,13 @@ final class MenuController: ObservableObject {
             }
         }
         for plan in await backend.takePlans() {
-            watcher.update(enforceStopBundleIDs: plan.dryRun ? [] : Set(plan.enforceStopBundleIDs))
+            let notices = Dictionary(
+                plan.actions.compactMap { action in
+                    action.type == "app.stop" ? action.bundleID.map { ($0, LockNotice(title: action.title, message: action.message)) } : nil
+                },
+                uniquingKeysWith: { first, _ in first }
+            )
+            watcher.update(enforceStopBundleIDs: plan.dryRun ? [] : Set(plan.enforceStopBundleIDs), notices: notices)
             let outcomes = await executor.execute(plan)
             let results = Dictionary(uniqueKeysWithValues: zip(plan.actions, outcomes).map { action, outcome in
                 (action.id, actionResult(outcome))

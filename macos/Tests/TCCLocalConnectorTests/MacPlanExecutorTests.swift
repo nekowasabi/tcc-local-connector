@@ -234,7 +234,7 @@ private final class FakeLaunchWorkspace: LaunchWorkspace, @unchecked Sendable {
 private final class FakeLockNotifier: LaunchLockNotifier {
     private(set) var bundleIDs: [String] = []
 
-    func notifyLocked(bundleID: String) {
+    func notifyLocked(bundleID: String, title: String?, message: String?) {
         bundleIDs.append(bundleID)
     }
 }
