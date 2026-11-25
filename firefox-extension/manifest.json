@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "TCC Local Connector Domain Blocker",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Blocks task-defined domains while TCC Local Connector is active.",
   "browser_specific_settings": {
     "gecko": {
