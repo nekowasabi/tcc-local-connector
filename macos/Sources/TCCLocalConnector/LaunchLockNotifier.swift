@@ -1,7 +1,7 @@
 import Foundation
 
 protocol LaunchLockNotifier: AnyObject {
-    func notifyLocked(bundleID: String)
+    func notifyLocked(bundleID: String, title: String?, message: String?)
 }
 
 protocol TerminalNotifierRunning {
@@ -38,11 +38,13 @@ final class TerminalNotifierLockNotifier: LaunchLockNotifier {
         self.runner = runner
     }
 
-    func notifyLocked(bundleID: String) {
+    func notifyLocked(bundleID: String, title: String?, message: String?) {
         // Why: terminal-notifier instead of UNUserNotificationCenter — MenuBarExtra is treated as foreground and suppresses banners.
+        let message = message.flatMap { $0.isEmpty ? nil : $0 }
         runner.run(arguments: [
-            "-title", LaunchLockNotification.title,
-            "-message", LaunchLockNotification.body(bundleID: bundleID),
+            "-title", title ?? LaunchLockNotification.title,
+            "-subtitle", bundleID,
+            "-message", message ?? LaunchLockNotification.body(bundleID: bundleID),
         ])
     }
 }

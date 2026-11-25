@@ -55,7 +55,7 @@ private struct DefaultObservedApplication: LaunchObservedApplication {
         self.appFromNotification = appFromNotification
     }
 
-    func update(enforceStopBundleIDs: Set<String>) {
+    func update(enforceStopBundleIDs: Set<String>, notices: [String: LockNotice] = [:]) {
         stop()
         center.addObserver(
             self,
@@ -64,6 +64,7 @@ private struct DefaultObservedApplication: LaunchObservedApplication {
             object: nil
         )
         self.enforceStopBundleIDs = enforceStopBundleIDs
+        self.notices = notices
         isActive = true
     }
 
@@ -74,7 +75,8 @@ private struct DefaultObservedApplication: LaunchObservedApplication {
             return
         }
         _ = app.terminate()
-        lockNotifier.notifyLocked(bundleID: bundleID)
+        let notice = notices[bundleID]
+        lockNotifier.notifyLocked(bundleID: bundleID, title: notice?.title, message: notice?.message)
     }
 
     func stop() {
@@ -82,6 +84,7 @@ private struct DefaultObservedApplication: LaunchObservedApplication {
             center.removeObserver(self)
             isActive = false
             enforceStopBundleIDs = []
+            notices = [:]
         }
     }
 
@@ -90,5 +93,11 @@ private struct DefaultObservedApplication: LaunchObservedApplication {
     }
 
     private var enforceStopBundleIDs: Set<String> = []
+    private var notices: [String: LockNotice] = [:]
     private var isActive = false
+}
+
+struct LockNotice: Equatable {
+    let title: String?
+    let message: String?
 }

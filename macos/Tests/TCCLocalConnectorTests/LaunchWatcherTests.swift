@@ -30,14 +30,49 @@ final class LaunchWatcherTests: XCTestCase {
         let runner = FakeTerminalNotifierRunner()
         let notifier = TerminalNotifierLockNotifier(runner: runner)
 
-        notifier.notifyLocked(bundleID: "com.example.app")
+        notifier.notifyLocked(bundleID: "com.example.app", title: nil, message: nil)
 
         XCTAssertEqual(runner.invocations.count, 1)
         XCTAssertEqual(runner.invocations.first, [
             "-title", LaunchLockNotification.title,
+            "-subtitle", "com.example.app",
             "-message", LaunchLockNotification.body(bundleID: "com.example.app"),
         ])
         XCTAssertTrue((runner.invocations.first ?? []).contains { $0.contains("止めています") })
+    }
+
+    func testTerminalNotifierLockNotifier_UsesRuleNotice() {
+        let runner = FakeTerminalNotifierRunner()
+        let notifier = TerminalNotifierLockNotifier(runner: runner)
+
+        notifier.notifyLocked(bundleID: "com.example.app", title: "ロック中: sns-gate", message: "SNS タスク以外は止める")
+
+        XCTAssertEqual(runner.invocations.first, [
+            "-title", "ロック中: sns-gate",
+            "-subtitle", "com.example.app",
+            "-message", "SNS タスク以外は止める",
+        ])
+    }
+
+    func testLaunchWatcher_PassesRuleNoticeOnTerminate() {
+        let notificationCenter = FakeNotificationCenter()
+        let launchedApp = FakeLaunchApplication(bundleIdentifier: "com.example.app")
+        let lockNotifier = FakeLockNotifier()
+        let watcher = LaunchWatcher(center: notificationCenter, lockNotifier: lockNotifier) { notification in
+            notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? FakeLaunchApplication
+        }
+        let notice = LockNotice(title: "ロック中: sns-gate", message: "説明")
+
+        watcher.update(enforceStopBundleIDs: ["com.example.app"], notices: ["com.example.app": notice])
+        notificationCenter.send(
+            Notification(
+                name: NSWorkspace.didLaunchApplicationNotification,
+                object: nil,
+                userInfo: [NSWorkspace.applicationUserInfoKey: launchedApp]
+            )
+        )
+
+        XCTAssertEqual(lockNotifier.notices, [notice])
     }
 
     func testLaunchWatcher_NonMatchingLaunchDoesNotTerminateOrNotify() {
@@ -73,8 +108,11 @@ private final class FakeTerminalNotifierRunner: TerminalNotifierRunning {
 private final class FakeLockNotifier: LaunchLockNotifier {
     private(set) var bundleIDs: [String] = []
 
-    func notifyLocked(bundleID: String) {
+    private(set) var notices: [LockNotice] = []
+
+    func notifyLocked(bundleID: String, title: String?, message: String?) {
         bundleIDs.append(bundleID)
+        notices.append(LockNotice(title: title, message: message))
     }
 }
 

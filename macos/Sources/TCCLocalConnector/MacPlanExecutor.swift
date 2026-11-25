@@ -129,7 +129,7 @@ final class MacPlanExecutor: PlanExecutor, @unchecked Sendable {
         while Date() < deadline {
             if workspace.runningApplications(bundleID: bundleID).isEmpty {
                 // Why: Notify only on an actual quit; skipped (not running) repeats every poll and would spam.
-                lockNotifier.notifyLocked(bundleID: bundleID)
+                lockNotifier.notifyLocked(bundleID: bundleID, title: action.title, message: action.message)
                 return .accepted
             }
             do {
