@@ -65,7 +65,7 @@ public sealed class BackendClient
         {
             if (_stdin is null) throw new InvalidOperationException("backend is not running");
             _nextRequestSequence++;
-            var request = new BackendRequest { Id = $"menu-{_nextRequestSequence}", Method = method, Params = @params };
+            var request = new BackendRequest { Id = $"menu-{method}-{_nextRequestSequence}", Method = method, Params = @params };
             var payload = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(request) + "\n");
             _stdin.Write(payload);
             _stdin.Flush();

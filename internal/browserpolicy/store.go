@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -117,6 +118,11 @@ func writeAtomic(path string, payload []byte) error {
 		return err
 	}
 	committed = true
+	// Why: Windows cannot fsync a directory (Access is denied) and reports files as 0666,
+	// so both checks would fail every write there although the rename already committed.
+	if runtime.GOOS == "windows" {
+		return nil
+	}
 	directory, err := os.Open(dir)
 	if err != nil {
 		return committedWriteError{err: err}

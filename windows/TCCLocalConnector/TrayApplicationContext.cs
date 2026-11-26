@@ -55,8 +55,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             Visible = true,
             ContextMenuStrip = menu,
         };
-        _executor = new WindowsPlanExecutor(_icon);
-        _watcher = new LaunchWatcher(new BalloonLockNotifier(_icon));
+        _watcher = new LaunchWatcher(new BalloonLockNotifier(_icon, warning => _recentWarning = warning));
+        _executor = new WindowsPlanExecutor(_icon, _watcher);
         _timer.Tick += (_, _) => Synchronize();
         Start();
     }
@@ -139,15 +139,17 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _recentWarning = notification.Message.Length == 0 ? notification.Code : notification.Message;
         foreach (var response in _backend.TakeResponses())
         {
+            // Why: only a status reply says whether the backend enforces; a report_actions or pause reply must not drop the heartbeat (as on macOS).
+            var isStatus = response.Id?.StartsWith("menu-status-", StringComparison.Ordinal) == true;
             if (response.Error is { } error)
             {
-                responseFailed = true;
+                responseFailed = responseFailed || isStatus;
                 _recentWarning = error.Message.Length == 0 ? error.Code : error.Message;
                 continue;
             }
             if (response.Result is not { ValueKind: JsonValueKind.Object } result)
             {
-                responseFailed = true;
+                responseFailed = responseFailed || isStatus;
                 continue;
             }
             if (result.TryGetProperty("running_tasks", out _) && result.Deserialize<StatusPayload>() is { } status)
@@ -162,16 +164,18 @@ internal sealed class TrayApplicationContext : ApplicationContext
             }
             else
             {
-                responseFailed = true;
+                responseFailed = responseFailed || isStatus;
             }
         }
         foreach (var plan in _backend.TakePlans())
         {
-            _watcher.Update(plan.DryRun ? new HashSet<string>() : new HashSet<string>(plan.EnforceStopBundleIds));
+            _watcher.Update(plan);
             // ponytail: runs on the UI thread and can block up to app.stop grace seconds; move to Task.Run if the menu stalls.
             var outcomes = _executor.Execute(plan.Actions, plan.DryRun);
             var results = plan.Actions.Select((action, index) =>
             {
+                if (outcomes[index] == ActionOutcome.Rejected("quit_refused") && action.BundleId is { } bundleId)
+                    _recentWarning = LaunchLockNotification.NotStopped(Path.GetFileNameWithoutExtension(bundleId));
                 var (status, code) = ActionResultMapper.Map(outcomes[index]);
                 return new { action_id = action.Id, status, code };
             }).ToList();

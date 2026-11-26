@@ -10,4 +10,8 @@
     <!-- Why: the dev box only has the .NET 10 runtime; let net8.0 test hosts run on it. -->
     <RollForward>LatestMajor</RollForward>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Why: C# にリントが無く、変更のたびに流せる静的検査として入れる。 -->
+    <PackageReference Include="StyleCop.Analyzers" Version="1.1.118" PrivateAssets="all" IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive" />
+  </ItemGroup>
 </Project>
