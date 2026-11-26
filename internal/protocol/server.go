@@ -274,10 +274,7 @@ func (s *Server) handle(ctx context.Context, request Request) (any, *RPCError) {
 		}
 		if err := s.Engine.Pause(until); err != nil {
 			if errors.Is(err, engine.ErrPauseDeadline) {
-				return nil, &RPCError{Code: "pause_rejected", Message: "一時停止は30分までです"}
-			}
-			if errors.Is(err, engine.ErrPauseUsed) {
-				return nil, &RPCError{Code: "pause_rejected", Message: "一時停止は1日1回までです"}
+				return nil, &RPCError{Code: "pause_rejected", Message: "一時停止は1時間までです"}
 			}
 			return nil, &RPCError{Code: "internal_error", Message: "could not persist pause"}
 		}

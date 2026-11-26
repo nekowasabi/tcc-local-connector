@@ -33,6 +33,8 @@ private struct MenuContent: View {
         Button("ログを開く") { controller.perform(.openLog) }
         Divider()
         Button("15分間一時停止") { controller.perform(.pause(Constants.pausePresetShortSeconds)) }
+        Button("30分間一時停止") { controller.perform(.pause(Constants.pausePresetMediumSeconds)) }
+        Button("1時間一時停止") { controller.perform(.pause(Constants.pausePresetLongSeconds)) }
         Button("一時停止を解除") { controller.perform(.resume) }
         Divider()
         Button("完全終了…") { controller.perform(.quit) }

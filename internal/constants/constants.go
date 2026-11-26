@@ -48,10 +48,9 @@ const (
 	PauseStateVersion       = 1
 	LedgerVersion           = 1
 	PauseMinSeconds         = 60
-	PauseMaxSeconds         = 1800
+	PauseMaxSeconds         = 3600
 	PausePresetShortSeconds = 900
 	PausePresetLongSeconds  = 3600
-	PauseNextDayStartHour   = 5
 	MinLogRetainDays        = 1
 	DefaultLogRetainDays    = 14
 	MaxLogRetainDays        = 365

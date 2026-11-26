@@ -911,35 +911,27 @@ func TestEngine_PauseAndResumeLifecycle(t *testing.T) {
 	}
 }
 
-func TestEnginePauseIsBoundedOncePerDay(t *testing.T) {
+func TestEnginePauseIsBoundedButRepeatable(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	deps := Deps{BrowserPolicyStore: &memoryPolicyStore{}}
 	e := New(deps)
-	if err := e.Pause(time.Now().Add(time.Hour)); !errors.Is(err, ErrPauseDeadline) {
+	if err := e.Pause(time.Now().Add(2 * time.Hour)); !errors.Is(err, ErrPauseDeadline) {
 		t.Fatalf("long pause error = %v", err)
 	}
 	if err := e.Pause(time.Now().Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
+	// 一時停止中に延長しても、解除後に再び止めても、再起動後でも受け付ける
+	if err := e.Pause(time.Now().Add(30 * time.Minute)); err != nil {
+		t.Fatalf("extend active pause: %v", err)
+	}
 	if err := e.Resume(); err != nil {
 		t.Fatal(err)
 	}
 	restarted := New(deps)
-	if err := restarted.Pause(time.Now().Add(time.Minute)); !errors.Is(err, ErrPauseUsed) {
-		t.Fatalf("second pause after restart = %v", err)
-	}
-	path := filepath.Join(home, constants.StateDirRelPath, state.PauseBudgetFileName)
-	if err := state.SavePauseDay(path, pauseDay(time.Now().AddDate(0, 0, -1))); err != nil {
-		t.Fatal(err)
-	}
 	if err := restarted.Pause(time.Now().Add(time.Minute)); err != nil {
-		t.Fatalf("pause on the next day: %v", err)
-	}
-
-	cutoff := time.Date(2026, time.November, 22, constants.PauseNextDayStartHour, 0, 0, 0, time.Local)
-	if pauseDay(cutoff.Add(-time.Second)) != "2026-11-21" || pauseDay(cutoff) != "2026-11-22" {
-		t.Fatal("pause day does not switch at the start hour")
+		t.Fatalf("second pause after restart = %v", err)
 	}
 }
 

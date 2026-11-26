@@ -722,8 +722,7 @@ func truncateOutput(output []byte) string {
 }
 
 var (
-	ErrPauseDeadline = errors.New("pause deadline must be within 30 minutes")
-	ErrPauseUsed     = errors.New("pause is already active or was used today")
+	ErrPauseDeadline = errors.New("pause deadline must be within 1 hour")
 )
 
 func (e *Engine) Pause(until time.Time) error {
@@ -746,41 +745,14 @@ func (e *Engine) beginPause(until time.Time) (Status, error) {
 	if !until.After(now) || until.After(now.Add(constants.PauseMaxSeconds*time.Second)) {
 		return Status{}, ErrPauseDeadline
 	}
-	path := filepath.Join(filepath.Dir(e.pausePath), state.PauseBudgetFileName)
-	lastDay, err := state.LoadPauseDay(path)
-	if err != nil {
-		return Status{}, err
-	}
-	day := pauseDay(now)
-	if lastDay == day {
-		return Status{}, ErrPauseUsed
-	}
-	pause, err := state.LoadPause(e.pausePath)
-	if err != nil {
-		return Status{}, err
-	}
-	if !pause.Until.IsZero() && !pause.Expired(now) {
-		return Status{}, ErrPauseUsed
-	}
-	// Why: Reserve the day before saving the pause so a restart cannot grant an uncounted pause.
-	if err := state.SavePauseDay(path, day); err != nil {
-		return Status{}, err
-	}
+	// Why: 会議中などに何度でも解除できるよう回数は数えない。長さだけを PauseMaxSeconds で縛る
 	if err := state.SavePause(e.pausePath, state.Pause{Until: until, Reason: "user_requested", CreatedAt: now.UTC()}); err != nil {
-		return Status{}, errors.Join(err, state.SavePauseDay(path, lastDay))
+		return Status{}, err
 	}
 
 	e.machine.Transition("pause", now, 0)
 	e.status.State = e.machine.Current()
 	return e.status, nil
-}
-
-func pauseDay(now time.Time) string {
-	year, month, day := now.Date()
-	if now.Before(time.Date(year, month, day, constants.PauseNextDayStartHour, 0, 0, 0, now.Location())) {
-		now = now.AddDate(0, 0, -1)
-	}
-	return now.Format(time.DateOnly)
 }
 
 func (e *Engine) Resume() error {
