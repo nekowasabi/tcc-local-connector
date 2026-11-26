@@ -37,6 +37,8 @@ final class MenuController: ObservableObject {
     @Published private(set) var status: StatusPayload?
     @Published private(set) var lastUpdated: Date?
     @Published private(set) var recentWarning = ""
+    @Published private(set) var pausedUntil: Date?
+    var isPaused: Bool { status?.state == "paused" }
 
     private let backend: any MenuBackend
     private let executor = MacPlanExecutor()
@@ -45,15 +47,20 @@ final class MenuController: ObservableObject {
     private let heartbeat: BrowserPolicyHeartbeat
     private var timer: Timer?
     private var paths: [String: String] = [:]
+    private let notify: @MainActor (String, String) -> Void
 
     init(
         backend: any MenuBackend = BackendClient(),
         system: any MenuSystem = DefaultMenuSystem(),
-        heartbeat: BrowserPolicyHeartbeat = BrowserPolicyHeartbeat()
+        heartbeat: BrowserPolicyHeartbeat = BrowserPolicyHeartbeat(),
+        notify: @escaping @MainActor (String, String) -> Void = { title, message in
+            ProcessTerminalNotifierRunner().run(arguments: ["-title", title, "-message", message])
+        }
     ) {
         self.backend = backend
         self.system = system
         self.heartbeat = heartbeat
+        self.notify = notify
     }
 
     func perform(_ action: MenuAction) {
@@ -175,9 +182,17 @@ final class MenuController: ObservableObject {
         for response in await backend.takeResponses() {
             // Why: A pause denial or plan acknowledgement says nothing about whether the backend is enforcing.
             let isStatus = response.id == "status" || response.id?.hasPrefix("menu-status-") == true
+            let isPause = response.id?.hasPrefix("menu-pause-") == true
             if let error = response.error {
                 responseFailed = responseFailed || isStatus
                 recentWarning = error.message.isEmpty ? error.code : error.message
+                if isPause { notify("一時停止できませんでした", recentWarning) }
+                continue
+            }
+            if isPause, case .object(let fields)? = response.result, case .string(let text)? = fields["until"],
+               let until = ISO8601DateFormatter().date(from: text) {
+                pausedUntil = until
+                notify("一時停止しました", "\(until.formatted(date: .omitted, time: .shortened)) までロックを外します")
                 continue
             }
             guard let result = response.result, let payload = try? JSONEncoder().encode(result) else {
@@ -185,7 +200,12 @@ final class MenuController: ObservableObject {
                 continue
             }
             if let decoded = try? JSONDecoder().decode(StatusPayload.self, from: payload) {
+                let wasPaused = isPaused
                 status = decoded
+                if wasPaused && !isPaused {
+                    pausedUntil = nil
+                    notify("一時停止が終わりました", "ロックを再開しました")
+                }
                 lastUpdated = Date()
                 if isHealthyStatus(decoded) {
                     receivedHealthyStatus = true
