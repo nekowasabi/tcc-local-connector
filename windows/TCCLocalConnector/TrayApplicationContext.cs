@@ -55,8 +55,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             Visible = true,
             ContextMenuStrip = menu,
         };
-        _executor = new WindowsPlanExecutor(_icon);
-        _watcher = new LaunchWatcher(new BalloonLockNotifier(_icon));
+        _watcher = new LaunchWatcher(new BalloonLockNotifier(_icon, warning => _recentWarning = warning));
+        _executor = new WindowsPlanExecutor(_icon, _watcher);
         _timer.Tick += (_, _) => Synchronize();
         Start();
     }
@@ -167,11 +167,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
         foreach (var plan in _backend.TakePlans())
         {
-            _watcher.Update(plan.DryRun ? new HashSet<string>() : new HashSet<string>(plan.EnforceStopBundleIds));
+            _watcher.Update(plan);
             // ponytail: runs on the UI thread and can block up to app.stop grace seconds; move to Task.Run if the menu stalls.
             var outcomes = _executor.Execute(plan.Actions, plan.DryRun);
             var results = plan.Actions.Select((action, index) =>
             {
+                if (outcomes[index] == ActionOutcome.Rejected("quit_refused") && action.BundleId is { } bundleId)
+                    _recentWarning = LaunchLockNotification.NotStopped(Path.GetFileNameWithoutExtension(bundleId));
                 var (status, code) = ActionResultMapper.Map(outcomes[index]);
                 return new { action_id = action.Id, status, code };
             }).ToList();

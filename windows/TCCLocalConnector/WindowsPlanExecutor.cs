@@ -7,8 +7,13 @@ namespace TCCLocalConnector;
 internal sealed class WindowsPlanExecutor
 {
     private readonly NotifyIcon _icon;
+    private readonly LaunchWatcher _watcher;
 
-    public WindowsPlanExecutor(NotifyIcon icon) => _icon = icon;
+    public WindowsPlanExecutor(NotifyIcon icon, LaunchWatcher watcher)
+    {
+        _icon = icon;
+        _watcher = watcher;
+    }
 
     public List<ActionOutcome> Execute(IReadOnlyList<PlanAction> actions, bool dryRun)
     {
@@ -59,31 +64,47 @@ internal sealed class WindowsPlanExecutor
         }
     }
 
-    private static ActionOutcome StopApp(PlanAction action)
+    private ActionOutcome StopApp(PlanAction action)
     {
         if (string.IsNullOrEmpty(action.BundleId)) return ActionOutcome.Rejected("invalid_action");
-        var processes = Running(action.BundleId);
+        // Why: the watcher skips the app while StopApp owns it, and both share one notice per launch (formal/lock-notice).
+        _watcher.Claim(action.BundleId);
+        try
+        {
+            var outcome = EndApp(action.BundleId, action.GraceSeconds);
+            if (outcome == ActionOutcome.Accepted) _watcher.ReportStopped(action.BundleId);
+            return outcome;
+        }
+        finally
+        {
+            _watcher.Release(action.BundleId);
+        }
+    }
+
+    private static ActionOutcome EndApp(string bundleId, int? graceSeconds)
+    {
+        var processes = Running(bundleId);
         if (processes.Length == 0) return ActionOutcome.Skipped;
         foreach (var process in processes)
         {
             try { process.CloseMainWindow(); } catch (Exception) { }
             process.Dispose();
         }
-        var grace = Math.Max(1, action.GraceSeconds ?? 10);
+        var grace = Math.Max(1, graceSeconds ?? 10);
         var deadline = DateTime.UtcNow.AddSeconds(grace);
         while (DateTime.UtcNow < deadline)
         {
-            if (!IsRunning(action.BundleId)) return ActionOutcome.Accepted;
+            if (!IsRunning(bundleId)) return ActionOutcome.Accepted;
             Thread.Sleep(Constants.AppStopPollIntervalMilliseconds);
         }
         // Why: Windows has no Quit AppleEvent; WM_CLOSE is ignored by tray-resident apps, so escalate to Kill after grace.
-        foreach (var process in Running(action.BundleId))
+        foreach (var process in Running(bundleId))
         {
             try { process.Kill(); } catch (Exception) { }
             process.Dispose();
         }
         Thread.Sleep(Constants.AppStopPollIntervalMilliseconds);
-        return IsRunning(action.BundleId) ? ActionOutcome.Rejected("quit_refused") : ActionOutcome.Accepted;
+        return IsRunning(bundleId) ? ActionOutcome.Rejected("quit_refused") : ActionOutcome.Accepted;
     }
 
     private ActionOutcome Notify(PlanAction action)
