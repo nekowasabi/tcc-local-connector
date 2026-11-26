@@ -15,6 +15,7 @@ fi
 mkdir -p "$agents"
 tmp=$(mktemp "$agents/.$label.XXXXXX")
 trap 'rm -f -- "$tmp"' EXIT
+# Why: メニューの「完全終了」は exit 0 で終わるので再起動しない。kill やクラッシュ（exit 0 以外・シグナル）だけ再起動する
 cat > "$tmp" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -29,7 +30,10 @@ cat > "$tmp" <<PLIST
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
-  <true/>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
 </dict>
 </plist>
 PLIST
