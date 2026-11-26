@@ -1,0 +1,7 @@
+root = false
+
+[*.cs]
+# Why: このリポジトリはフィールドを _ で始め、this. を付けず、著作権ヘッダーを書かない。
+dotnet_diagnostic.SA1101.severity = none
+dotnet_diagnostic.SA1309.severity = none
+dotnet_diagnostic.SA1633.severity = none
