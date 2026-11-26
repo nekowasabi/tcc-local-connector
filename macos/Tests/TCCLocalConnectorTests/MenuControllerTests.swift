@@ -60,6 +60,25 @@ final class MenuControllerTests: XCTestCase {
         XCTAssertEqual(controller.recentWarning, "warning")
     }
 
+    func testPauseStartAndEndAreNotified() async {
+        let backend = MockMenuBackend()
+        var notices: [String] = []
+        let controller = MenuController(backend: backend, system: MockMenuSystem(), notify: { title, _ in notices.append(title) })
+        let decode = { (json: String) in try! JSONDecoder().decode(BackendResponse.self, from: Data(json.utf8)) }
+        await backend.enqueueResponse(decode(#"{"version":1,"id":"menu-pause-1","result":{"until":"2026-11-26T12:00:00+09:00"}}"#))
+        await backend.enqueueResponse(decode(#"{"version":1,"id":"status","result":{"state":"paused","cycle_id":1,"parse_ok":true,"running_tasks":[],"last_error":null}}"#))
+        await controller.processPendingMessagesForTesting()
+        XCTAssertTrue(controller.isPaused)
+        XCTAssertNotNil(controller.pausedUntil)
+
+        await backend.enqueueResponse(decode(#"{"version":1,"id":"status","result":{"state":"active","cycle_id":2,"parse_ok":true,"running_tasks":[],"last_error":null}}"#))
+        await backend.enqueueResponse(decode(#"{"version":1,"id":"menu-pause-2","error":{"code":"pause_rejected","message":"一時停止は1時間までです"}}"#))
+        await controller.processPendingMessagesForTesting()
+        XCTAssertFalse(controller.isPaused)
+        XCTAssertNil(controller.pausedUntil)
+        XCTAssertEqual(notices, ["一時停止しました", "一時停止が終わりました", "一時停止できませんでした"])
+    }
+
     func testOpenActionsUseReportedPaths() async throws {
         let backend = MockMenuBackend()
         let system = MockMenuSystem()

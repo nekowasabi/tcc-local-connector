@@ -12,7 +12,7 @@ import ConnectorCore
     }
 
     var body: some Scene {
-        MenuBarExtra("TCC Local Connector", systemImage: StatusIcon.symbolName(controller.state)) {
+        MenuBarExtra("TCC Local Connector", systemImage: controller.isPaused ? "pause.circle" : StatusIcon.symbolName(controller.state)) {
             MenuContent(controller: controller)
         }
     }
@@ -23,6 +23,9 @@ private struct MenuContent: View {
 
     var body: some View {
         Button("状態表示: \(StatusIcon.describe(controller.state))") { controller.perform(.showStatus) }
+        if controller.isPaused {
+            Text("一時停止中: \(controller.pausedUntil.map { $0.formatted(date: .omitted, time: .shortened) + " まで" } ?? "終了時刻は未取得")")
+        }
         Button("警告表示: \(controller.recentWarning.isEmpty ? "なし" : controller.recentWarning)") { controller.perform(.showWarning) }
         Text("現在のタスク: \(controller.status?.runningTasks.first?.name ?? "未取得")")
         Text("最終取得: \(controller.lastUpdated?.formatted(date: .omitted, time: .standard) ?? "未取得")")
@@ -33,6 +36,8 @@ private struct MenuContent: View {
         Button("ログを開く") { controller.perform(.openLog) }
         Divider()
         Button("15分間一時停止") { controller.perform(.pause(Constants.pausePresetShortSeconds)) }
+        Button("30分間一時停止") { controller.perform(.pause(Constants.pausePresetMediumSeconds)) }
+        Button("1時間一時停止") { controller.perform(.pause(Constants.pausePresetLongSeconds)) }
         Button("一時停止を解除") { controller.perform(.resume) }
         Divider()
         Button("完全終了…") { controller.perform(.quit) }

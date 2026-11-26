@@ -8,5 +8,7 @@ public enum Constants {
 	public static let menuRefreshIntervalSeconds = 5
 	public static let backendRequestTimeoutSeconds = 30
 	public static let pausePresetShortSeconds = 900
+	public static let pausePresetMediumSeconds = 1800
+	public static let pausePresetLongSeconds = 3600
 	public static let appStopPollIntervalMilliseconds = 250
 }

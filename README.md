@@ -198,7 +198,7 @@ rules:
 
 拡張の権限は `nativeMessaging`、`webRequest`、`webRequestBlocking`、`tabs`、`<all_urls>` です。通常・プライベート両方のウィンドウで遮断します。遮断対象のタブが開いていれば、遮断画面に切り替えます。Native Messaging Host のマニフェストはコネクター起動時に利用者別に登録されます。
 
-`polling.failure_policy` の既定値は `fail_closed` です。タスク取得の失敗が猶予を超えたら、実行中タスクがない場合の遮断ルールを適用します。一時停止はローカル時間の午前5時を区切りとして1日1回、30分までです。`safety.dry_run: true` では遮断予定を確認できます。Host の切断やハートビートの期限切れでは Firefox の遮断を解除します。
+`polling.failure_policy` の既定値は `fail_closed` です。タスク取得の失敗が猶予を超えたら、実行中タスクがない場合の遮断ルールを適用します。一時停止は回数の制限なく使え、1回あたり1時間までです。`safety.dry_run: true` では遮断予定を確認できます。Host の切断やハートビートの期限切れでは Firefox の遮断を解除します。
 
 拡張を外すには `about:addons` から削除します。LaunchAgent は `launchctl bootout "gui/$(id -u)/jp.takets.tcc-local-connector"` で停止できます。
 
