@@ -55,7 +55,7 @@ struct DefaultLaunchWorkspace: LaunchWorkspace {
     }
 }
 
-final class MacPlanExecutor: PlanExecutor, @unchecked Sendable {
+final class MacPlanExecutor: @unchecked Sendable {
     private let workspace: LaunchWorkspace
     private let startTimeoutSeconds: TimeInterval
     private let lockNotifier: LaunchLockNotifier

@@ -24,7 +24,6 @@ final class NativeMessagingInstallerTests: XCTestCase {
         XCTAssertEqual(manifest["allowed_extensions"] as? [String], [
             "firefox-domain-blocker@tcc-local-connector.takets.jp",
         ])
-        XCTAssertNil(manifest["allowed_origins"])
 
         let directoryPermissions = try XCTUnwrap(
             FileManager.default.attributesOfItem(

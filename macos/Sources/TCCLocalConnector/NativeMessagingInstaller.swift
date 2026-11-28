@@ -8,9 +8,6 @@ struct NativeMessagingBrowser: Equatable {
     var manifestDirectory: String
     var description: String
     var allowedExtensions: [String]
-    var allowedOrigins: [String]
-
-    var isConfigured: Bool { !allowedExtensions.isEmpty || !allowedOrigins.isEmpty }
 }
 
 enum NativeMessagingCatalog {
@@ -21,8 +18,7 @@ enum NativeMessagingCatalog {
             manifestName: "jp.takets.tcc_local_connector.firefox",
             manifestDirectory: "Mozilla/NativeMessagingHosts",
             description: "TCC Local Connector Firefox native messaging host",
-            allowedExtensions: ["firefox-domain-blocker@tcc-local-connector.takets.jp"],
-            allowedOrigins: []
+            allowedExtensions: ["firefox-domain-blocker@tcc-local-connector.takets.jp"]
         ),
     ]
 }
@@ -73,7 +69,6 @@ struct NativeMessagingInstaller {
     private enum Outcome { case installed, skipped, failed }
 
     private func install(_ browser: NativeMessagingBrowser) -> Outcome {
-        guard browser.isConfigured else { return .skipped }
         guard let hostURL = resolveHost(named: browser.hostResourceName) else { return .skipped }
         do {
             try writeManifest(browser, hostPath: hostURL.path)
@@ -120,18 +115,13 @@ struct NativeMessagingInstaller {
         )
         try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directoryURL.path)
 
-        var object: [String: Any] = [
+        let object: [String: Any] = [
             "name": browser.manifestName,
             "description": browser.description,
             "path": hostPath,
             "type": "stdio",
+            "allowed_extensions": browser.allowedExtensions,
         ]
-        if !browser.allowedExtensions.isEmpty {
-            object["allowed_extensions"] = browser.allowedExtensions
-        }
-        if !browser.allowedOrigins.isEmpty {
-            object["allowed_origins"] = browser.allowedOrigins
-        }
         let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
         let temporaryURL = directoryURL.appendingPathComponent(".\(browser.manifestName).json.\(UUID().uuidString)")
         guard fileManager.createFile(atPath: temporaryURL.path, contents: data, attributes: [.posixPermissions: 0o600]) else {

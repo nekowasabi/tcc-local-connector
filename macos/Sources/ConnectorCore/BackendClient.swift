@@ -5,7 +5,6 @@ public actor BackendClient {
 	private var process: Process?
 	private var input: Pipe?
     private var stdout: Pipe?
-    private var stderr: Pipe?
     private var framer = LineFramer()
     public private(set) var plans: [PlanPayload] = []
     public private(set) var notifications: [NotifyPayload] = []
@@ -22,24 +21,17 @@ public actor BackendClient {
 		child.arguments = arguments
 		child.standardInput = stdin
 		let output = Pipe()
-		let error = Pipe()
 		child.standardOutput = output
-		child.standardError = error
+		child.standardError = FileHandle.nullDevice
 		output.fileHandleForReading.readabilityHandler = { [weak self] handle in
 			let data = handle.availableData
 			guard !data.isEmpty else { return }
 			Task { await self?.consumeStdout(data) }
 		}
-		error.fileHandleForReading.readabilityHandler = { [weak self] handle in
-			let data = handle.availableData
-			guard !data.isEmpty else { return }
-			Task { await self?.consumeStderr(data) }
-		}
 		try child.run()
 		process = child
 		input = stdin
 		stdout = output
-		stderr = error
 		state = .starting
 	}
 
@@ -52,9 +44,7 @@ public actor BackendClient {
 
 	public func send(method: String, params: JSONValue? = nil) throws {
 		nextRequestSequence += 1
-		let request = params.map { BackendRequest(id: "menu-\(method)-\(nextRequestSequence)", method: method, params: $0) }
-			?? BackendRequest(id: "menu-\(method)-\(nextRequestSequence)", method: method)
-		try send(request)
+		try send(BackendRequest(id: "menu-\(method)-\(nextRequestSequence)", method: method, params: params))
 	}
 
 	public func takePlans() -> [PlanPayload] {
@@ -83,14 +73,9 @@ public actor BackendClient {
         }
     }
 
-    public func consumeStderr(_ data: Data) {
-        _ = String(decoding: data, as: UTF8.self)
-    }
-
     private func handle(_ event: BackendEvent) {
         guard let data = event.data, let payload = try? JSONEncoder().encode(data) else { return }
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
         switch event.event {
         case "ready":
             struct ReadyPayload: Decodable { let protocolVersion: Int; let capabilities: [Capability]; enum CodingKeys: String, CodingKey { case protocolVersion = "protocol_version", capabilities } }
@@ -116,11 +101,9 @@ public actor BackendClient {
 
 	public func shutdown() {
 		stdout?.fileHandleForReading.readabilityHandler = nil
-		stderr?.fileHandleForReading.readabilityHandler = nil
 		input?.fileHandleForWriting.closeFile()
 		input = nil
 		stdout = nil
-		stderr = nil
 		if let process, process.isRunning {
 			process.terminate()
 		}

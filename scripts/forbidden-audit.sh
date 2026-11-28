@@ -58,9 +58,8 @@ check_count "D-09" "rg -n '\\b(60|180|30000|65536|1048576|86400|21600)\\b' inter
 check_count "D-10" "rg -n 'time\\.Since|monotonic|remainingSeconds|elapsedSeconds|time\\.Tick' internal/state" "0"
 check_min "D-11" "rg -n 'len\\(validationErrors\\)\\s*>\\s*0|len\\(validationErrors\\)\\s*!=\\s*0' internal/config/config.go" "1"
 check_count "D-12" "rg -n 'TODO|FIXME|XXX|TBD|未定|後で決める|要検討' internal cmd macos/Sources scripts --glob '!forbidden-audit.sh'" "0"
-check_count "D-13" "rg -n 'retry.*[0-9]+\\s*回|retries?\\s*[:=]\\s*[0-9]' PLAN-for-mac.md plan-for-mac/" "0"
-check_count "D-14" "rg -n 'xcodebuild|\\.xcodeproj|XCUIApplication|XCUIElement' . --glob '!docs/**' --glob '!.git/**' --glob '!RESEARCH*.md' --glob '!PLAN-for-mac.md' --glob '!plan-for-mac/**' --glob '!scripts/forbidden-audit.sh'" "0"
-check_count "D-15" "rg -n 'golangci-lint|swiftlint|swift-format' . --glob '!.git/**' --glob '!RESEARCH*.md' --glob '!PLAN-for-mac.md' --glob '!plan-for-mac/**' --glob '!scripts/forbidden-audit.sh'" "0"
+check_count "D-14" "rg -n 'xcodebuild|\\.xcodeproj|XCUIApplication|XCUIElement' . --glob '!docs/**' --glob '!.git/**' --glob '!RESEARCH*.md' --glob '!scripts/forbidden-audit.sh'" "0"
+check_count "D-15" "rg -n 'golangci-lint|swiftlint|swift-format' . --glob '!.git/**' --glob '!RESEARCH*.md' --glob '!scripts/forbidden-audit.sh'" "0"
 
 # Internal constants check used as substitute for local unused-check script.
 if ! staticcheck ./internal/constants >/tmp/forbidden-audit-staticcheck.log 2>&1; then

@@ -41,10 +41,6 @@ func BuildPlan(cycleID int64, previous, current Evaluation) (Plan, []Conflict) {
 	return buildPlan(cycleID, nil, nil, previous, current)
 }
 
-func BuildPlanWithDefault(cycleID int64, defaultActions []config.Action, previous, current Evaluation) (Plan, []Conflict) {
-	return buildPlan(cycleID, defaultActions, nil, previous, current)
-}
-
 func BuildPlanWithLifecycle(cycleID int64, defaultActions, stopActions []config.Action, previous, current Evaluation) (Plan, []Conflict) {
 	return buildPlan(cycleID, defaultActions, stopActions, previous, current)
 }

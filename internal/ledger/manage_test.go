@@ -41,16 +41,11 @@ func TestLoad_ValidAndVersionMismatch(t *testing.T) {
 	}
 }
 
-func TestLedger_PutGetAll_Remove(t *testing.T) {
+func TestLedger_PutGet_Remove(t *testing.T) {
 	ledger := &Ledger{Version: 1, Entries: map[string]Entry{}, path: filepath.Join(t.TempDir(), "ledger.json")}
 	ledger.Put(Entry{ProcessID: "task", PID: 123, PSLstart: "START", PSArgs: "ARGS"})
 	if _, ok := ledger.Get("task"); !ok {
 		t.Fatalf("expected put entry")
-	}
-
-	entries := ledger.All()
-	if len(entries) != 1 {
-		t.Fatalf("expected all entries=1, got=%d", len(entries))
 	}
 
 	ledger.Remove("task")
@@ -69,14 +64,14 @@ func TestManagerStartAndStop_RoundTrip(t *testing.T) {
 		Args:       []string{"5"},
 	}
 
-	if status, err := manager.Start(ctx, spec, false); err != nil || status != "started" {
+	if status, err := manager.Start(ctx, spec); err != nil || status != "started" {
 		t.Fatalf("start status=%q err=%v", status, err)
 	}
-	if status, err := manager.Start(ctx, spec, false); err != nil || status != "already_running" {
+	if status, err := manager.Start(ctx, spec); err != nil || status != "already_running" {
 		t.Fatalf("expected already_running on second start, got=%q err=%v", status, err)
 	}
 
-	stop, err := manager.Stop(ctx, "task", 200*time.Millisecond, false)
+	stop, err := manager.Stop(ctx, "task", 200*time.Millisecond)
 	if err != nil {
 		t.Fatalf("stop: %v", err)
 	}
@@ -93,12 +88,12 @@ func TestManagerStop_NormalTermination_OneSignal(t *testing.T) {
 		ProcessID:  "task",
 		Executable: "/bin/sleep",
 		Args:       []string{"5"},
-	}, false)
+	})
 	if err != nil || status != "started" {
 		t.Fatalf("start status=%q err=%v", status, err)
 	}
 
-	stop, err := manager.Stop(context.Background(), "task", 200*time.Millisecond, false)
+	stop, err := manager.Stop(context.Background(), "task", 200*time.Millisecond)
 	if err != nil {
 		t.Fatalf("stop: %v", err)
 	}
@@ -113,7 +108,7 @@ func TestManagerStop_NormalTermination_OneSignal(t *testing.T) {
 func TestManagerStop_MissingEntry(t *testing.T) {
 	ledger := &Ledger{Version: 1, Entries: map[string]Entry{}, path: filepath.Join(t.TempDir(), "ledger.json")}
 	manager := NewManager(ledger)
-	result, err := manager.Stop(context.Background(), "missing", 200*time.Millisecond, false)
+	result, err := manager.Stop(context.Background(), "missing", 200*time.Millisecond)
 	if err != nil {
 		t.Fatalf("stop missing entry: %v", err)
 	}
@@ -136,7 +131,7 @@ func TestManagerStop_Refused_NoRetry(t *testing.T) {
 		Args:       []string{"-test.run=TestManagerStop_RefusedHelperProcess"},
 		Env:        helper.Env,
 	}
-	if status, err := manager.Start(ctx, spec, false); err != nil || status != "started" {
+	if status, err := manager.Start(ctx, spec); err != nil || status != "started" {
 		t.Fatalf("start status=%q err=%v", status, err)
 	}
 	// Why: Wait until the helper ignores SIGTERM before testing the refused path.
@@ -153,7 +148,7 @@ func TestManagerStop_Refused_NoRetry(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	stop, err := manager.Stop(ctx, "stubborn", 50*time.Millisecond, false)
+	stop, err := manager.Stop(ctx, "stubborn", 50*time.Millisecond)
 	if err != nil {
 		t.Fatalf("stop: %v", err)
 	}
@@ -215,7 +210,7 @@ func TestManagerStop_ArgsMismatch_NoSignal(t *testing.T) {
 		path: filepath.Join(t.TempDir(), "ledger.json"),
 	}
 	manager := NewManager(ledger)
-	result, err := manager.Stop(context.Background(), "task", 100*time.Millisecond, false)
+	result, err := manager.Stop(context.Background(), "task", 100*time.Millisecond)
 	if err != nil {
 		t.Fatalf("Stop returned err=%v", err)
 	}
@@ -242,7 +237,7 @@ func TestStop_ProcessGone_NoSignal(t *testing.T) {
 		"task": {ProcessID: "task", PID: 999999, PSLstart: "START", PSArgs: "ARGS"},
 	}, path: filepath.Join(workDir, "ledger.json")}
 	manager := NewManager(ledger)
-	result, err := manager.Stop(context.Background(), "task", time.Millisecond*10, false)
+	result, err := manager.Stop(context.Background(), "task", time.Millisecond*10)
 	if err != nil {
 		t.Fatalf("Stop returned err=%v", err)
 	}
@@ -263,12 +258,12 @@ func TestManagerStart_AlreadyRunning_NoDuplicate(t *testing.T) {
 		Executable: "/bin/sleep",
 		Args:       []string{"5"},
 	}
-	status1, err := manager.Start(ctx, spec, false)
+	status1, err := manager.Start(ctx, spec)
 	if err != nil || status1 != "started" {
 		t.Fatalf("first start status=%q err=%v", status1, err)
 	}
 
-	status2, err := manager.Start(ctx, spec, false)
+	status2, err := manager.Start(ctx, spec)
 	if err != nil {
 		t.Fatalf("second start err=%v", err)
 	}
@@ -276,7 +271,7 @@ func TestManagerStart_AlreadyRunning_NoDuplicate(t *testing.T) {
 		t.Fatalf("second start status=%q, want already_running", status2)
 	}
 
-	stop, err := manager.Stop(ctx, "task", 200*time.Millisecond, false)
+	stop, err := manager.Stop(ctx, "task", 200*time.Millisecond)
 	if err != nil {
 		t.Fatalf("stop=%v", err)
 	}

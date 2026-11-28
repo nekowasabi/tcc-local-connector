@@ -20,18 +20,14 @@ public struct BackendRequest: Codable, Sendable {
     public let id: String
     public let method: String
     public let params: JSONValue?
-    public init(id: String, method: String, params: [String: String]? = nil) {
-        version = Constants.supportedProtocolVersion; self.id = id; self.method = method
-        self.params = params.map { .object($0.mapValues(JSONValue.string)) }
-    }
-    public init(id: String, method: String, params: JSONValue) {
+    public init(id: String, method: String, params: JSONValue? = nil) {
         version = Constants.supportedProtocolVersion; self.id = id; self.method = method; self.params = params
     }
 }
 public struct RPCError: Codable, Sendable { public let code: String; public let message: String }
 public struct BackendResponse: Codable, Sendable { public let version: Int; public let id: String?; public let result: JSONValue?; public let error: RPCError? }
 public struct BackendEvent: Codable, Sendable { public let version: Int; public let event: String; public let data: JSONValue? }
-public enum BackendState: String, Codable, Sendable { case starting, running, backendDown, backendDownPermanent, backendIncompatible, terminated }
+public enum BackendState: String, Codable, Sendable { case starting, running, backendDown, backendIncompatible, terminated }
 public struct PlanAction: Codable, Sendable {
     public let type: String
     public let id: String
@@ -39,35 +35,26 @@ public struct PlanAction: Codable, Sendable {
     public let title: String?
     public let message: String?
     public let graceSeconds: Int?
-    public let reason: String?
-    public let level: String?
 
-    enum CodingKeys: String, CodingKey { case type = "kind", id = "action_id", bundleID = "bundle_id", title, message, graceSeconds = "grace_seconds", reason, level }
-    public init(type: String, id: String, bundleID: String? = nil, title: String? = nil, message: String? = nil, graceSeconds: Int? = nil, reason: String? = nil, level: String? = nil) {
-        self.type = type; self.id = id; self.bundleID = bundleID; self.title = title; self.message = message; self.graceSeconds = graceSeconds; self.reason = reason; self.level = level
+    enum CodingKeys: String, CodingKey { case type = "kind", id = "action_id", bundleID = "bundle_id", title, message, graceSeconds = "grace_seconds" }
+    public init(type: String, id: String, bundleID: String? = nil, title: String? = nil, message: String? = nil, graceSeconds: Int? = nil) {
+        self.type = type; self.id = id; self.bundleID = bundleID; self.title = title; self.message = message; self.graceSeconds = graceSeconds
     }
 }
 public struct PlanPayload: Codable, Sendable { public let cycleID: Int64; public let dryRun: Bool; public let actions: [PlanAction]; public let enforceStopBundleIDs: [String]; enum CodingKeys: String, CodingKey { case cycleID = "cycle_id", dryRun = "dry_run", actions, enforceStopBundleIDs = "enforce_stop_bundle_ids" } }
 public struct RunningTaskPayload: Codable, Sendable {
     public let name: String
-    public let taskID: String
-
-    enum CodingKeys: String, CodingKey { case name; case taskID = "task_id" }
 }
 
 public struct StatusPayload: Codable, Sendable {
     public let state: String
     public let cycleID: Int64
-    public let parseOK: Bool
     public let runningTasks: [RunningTaskPayload]
-    public let lastError: String?
 
     enum CodingKeys: String, CodingKey {
         case state
         case cycleID = "cycle_id"
-        case parseOK = "parse_ok"
         case runningTasks = "running_tasks"
-        case lastError = "last_error"
     }
 }
-public struct NotifyPayload: Codable, Sendable { public let level: String; public let code: String; public let title: String; public let message: String; public let at: Date? }
+public struct NotifyPayload: Codable, Sendable { public let code: String; public let message: String }

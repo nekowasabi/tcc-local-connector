@@ -35,7 +35,7 @@ func TestStop_PIDReused(t *testing.T) {
 		"task": {PID: 999999, PSLstart: "START", PSArgs: "ARGS"},
 	}, path: filepath.Join(workDir, "ledger.json")}
 	manager := NewManager(ledger)
-	result, err := manager.Stop(context.Background(), "task", time.Millisecond*10, false)
+	result, err := manager.Stop(context.Background(), "task", time.Millisecond*10)
 	if err != nil {
 		t.Fatalf("Stop returned err=%v", err)
 	}

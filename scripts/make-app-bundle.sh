@@ -17,4 +17,4 @@ codesign --force --sign - "$root/dist/TCCLocalConnector.app"
 test -x "$native_host"
 test "$(stat -f '%Lp' "$native_host")" = 700
 # Why: Bundle build registers hosts for the current user so `make dev` does not need a second CLI.
-bash "$root/scripts/install-native-hosts.sh" --app "$root/dist/TCCLocalConnector.app"
+bash "$root/scripts/install-firefox-native-host.sh" --app "$root/dist/TCCLocalConnector.app"

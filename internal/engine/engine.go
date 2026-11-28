@@ -218,9 +218,6 @@ func (e *Engine) detectWake(now time.Time) bool {
 	}
 	wasLate := !e.lastTick.IsZero() && now.Sub(e.lastTick) > time.Duration(interval*constants.WakeReevaluateThresholdFactor)*time.Second
 	e.lastTick = now
-	if wasLate {
-		e.machine.Transition("wake", now, 0)
-	}
 	return wasLate
 }
 func (e *Engine) Snapshot() Status { e.mu.Lock(); defer e.mu.Unlock(); return e.status }
@@ -632,7 +629,7 @@ func (e *Engine) executeBackendAction(ctx context.Context, action rules.PlannedA
 			env = append(env, key+"="+value)
 		}
 		sort.Strings(env)
-		status, err := e.ledger.Start(ctx, ledger.StartSpec{ProcessID: action.ProcessID, Executable: action.Executable, Args: action.Args, WorkingDir: action.WorkingDir, Env: env}, false)
+		status, err := e.ledger.Start(ctx, ledger.StartSpec{ProcessID: action.ProcessID, Executable: action.Executable, Args: action.Args, WorkingDir: action.WorkingDir, Env: env})
 		return actionResult(action.ActionID, status, err)
 	case "process.stop":
 		if e.ledger == nil {
@@ -647,7 +644,7 @@ func (e *Engine) executeBackendAction(ctx context.Context, action rules.PlannedA
 		if grace == 0 {
 			grace = constants.DefaultProcessStopGraceSeconds
 		}
-		result, err := e.ledger.Stop(ctx, action.ProcessID, time.Duration(grace)*time.Second, false)
+		result, err := e.ledger.Stop(ctx, action.ProcessID, time.Duration(grace)*time.Second)
 		return actionResult(action.ActionID, result.Status, err)
 	case "command.run":
 		if action.Shell && !allowShell {
@@ -660,11 +657,7 @@ func (e *Engine) executeBackendAction(ctx context.Context, action rules.PlannedA
 			commandCtx, cancel = context.WithTimeout(ctx, time.Duration(action.TimeoutSeconds)*time.Second)
 			defer cancel()
 		}
-		command, commandErr := commandRunSpec(commandCtx, action)
-		if commandErr != nil {
-			return ActionResult{ActionID: action.ActionID, Status: "failed", Code: "action_refused"}
-		}
-		output, err := runCommand(commandCtx, command)
+		output, err := runCommand(commandCtx, commandRunSpec(commandCtx, action))
 		if err != nil {
 			code := "action_refused"
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
@@ -689,14 +682,14 @@ func actionResult(actionID, status string, err error) ActionResult {
 	return ActionResult{ActionID: actionID, Status: "accepted"}
 }
 
-func commandRunSpec(ctx context.Context, action rules.PlannedAction) (*exec.Cmd, error) {
+func commandRunSpec(ctx context.Context, action rules.PlannedAction) *exec.Cmd {
 	if action.Shell {
 		commandLine := strings.TrimSpace(action.Executable + " " + strings.Join(action.Args, " "))
-		return shellCommand(ctx, commandLine), nil
+		return shellCommand(ctx, commandLine)
 	}
 	cmd := exec.CommandContext(ctx, action.Executable, action.Args...)
 	cmd.Dir = action.WorkingDir
-	return cmd, nil
+	return cmd
 }
 
 func runCommand(ctx context.Context, command *exec.Cmd) (string, error) {
