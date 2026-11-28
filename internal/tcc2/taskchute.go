@@ -73,29 +73,9 @@ func (s *Session) read(ctx context.Context, expected int) (json.RawMessage, erro
 		err     error
 	}
 	for {
-		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-			line, err := readBoundedLine(s.output, maxResponseBytes)
-			if err != nil {
-				return nil, err
-			}
-			var response struct {
-				ID     int             `json:"id"`
-				Result json.RawMessage `json:"result"`
-				Error  json.RawMessage `json:"error"`
-			}
-			if err := json.Unmarshal(line, &response); err != nil {
-				return nil, err
-			}
-			if response.ID != expected {
-				continue
-			}
-			if len(response.Error) > 0 && string(response.Error) != "null" {
-				return nil, fmt.Errorf("MCP response error")
-			}
-			return response.Result, nil
-		}
 		done := make(chan reply, 1)
 		go func() { line, err := readBoundedLine(s.output, maxResponseBytes); done <- reply{line, err} }()
+		// ctx.Done() is a nil channel for a ctx without deadline or cancel, so select then waits only on done.
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()

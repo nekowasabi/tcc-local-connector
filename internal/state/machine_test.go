@@ -121,7 +121,7 @@ func TestMachine_Resume_Manual(t *testing.T) {
 	machine := NewMachine()
 	machine.Transition("pause", time.Now(), 0)
 	transition := machine.Transition("resume", time.Now(), 0)
-	if transition.State != StateFetching || transition.Code != "resumed" || !transition.Reevaluate {
+	if transition.State != StateFetching || transition.Code != "resumed" {
 		t.Fatalf("resume transition = %#v", transition)
 	}
 	if machine.Current() != StateFetching {
@@ -143,7 +143,7 @@ func TestMachine_ReloadConfigFailure_KeepsState(t *testing.T) {
 	machine.Transition("start", time.Now(), 0)
 	machine.Transition("failure", time.Now(), 10*time.Second)
 	transition := machine.Transition("config_error", time.Now(), 0)
-	if transition.State != StateDegraded || transition.Reevaluate || transition.ReleaseControls {
+	if transition.State != StateDegraded || transition.ReleaseControls {
 		t.Fatalf("config_error transition = %#v", transition)
 	}
 }
@@ -154,14 +154,6 @@ func TestMachine_PollTimeout_TreatedAsFailure(t *testing.T) {
 	transition := machine.Transition("failure", time.Now(), 10*time.Second)
 	if transition.State != StateDegraded {
 		t.Fatalf("timeout treated as failure transition = %#v", transition)
-	}
-}
-
-func TestMachine_WakeDetection_TriggersReevaluate(t *testing.T) {
-	machine := NewMachine()
-	transition := machine.Transition("wake", time.Now(), 0)
-	if transition.State != StateStarting || !transition.Reevaluate {
-		t.Fatalf("wake transition = %#v", transition)
 	}
 }
 

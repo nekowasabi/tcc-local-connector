@@ -20,10 +20,7 @@ type StopResult struct {
 type Manager struct{ Ledger *Ledger }
 
 func NewManager(ledger *Ledger) *Manager { return &Manager{Ledger: ledger} }
-func (m *Manager) Start(ctx context.Context, spec StartSpec, dryRun bool) (string, error) {
-	if dryRun {
-		return "skipped", nil
-	}
+func (m *Manager) Start(ctx context.Context, spec StartSpec) (string, error) {
 	if entry, ok := m.Ledger.Get(spec.ProcessID); ok {
 		live, err := VerifyEntry(ctx, entry)
 		if err == nil && live {
@@ -45,10 +42,7 @@ func (m *Manager) Start(ctx context.Context, spec StartSpec, dryRun bool) (strin
 	m.Ledger.Put(entry)
 	return "started", m.Ledger.Save()
 }
-func (m *Manager) Stop(ctx context.Context, id string, grace time.Duration, dryRun bool) (StopResult, error) {
-	if dryRun {
-		return StopResult{Status: "skipped"}, nil
-	}
+func (m *Manager) Stop(ctx context.Context, id string, grace time.Duration) (StopResult, error) {
 	entry, ok := m.Ledger.Get(id)
 	if !ok {
 		return StopResult{Status: "orphan_dropped"}, nil

@@ -24,19 +24,16 @@ const (
 	MaxFailureGraceSeconds        = 3600
 	WakeReevaluateThresholdFactor = 2
 
-	UserInfoTTLSeconds   = 21600
-	TaskChuteQueryDays   = 2
-	MaxRunningTasks      = 32
-	MaxTaskNameBytes     = 512
-	MaxErrorMessageBytes = 200
-	MaxRules             = 100
-	MaxActionsPerRule    = 20
+	UserInfoTTLSeconds = 21600
+	MaxRunningTasks    = 32
+	MaxTaskNameBytes   = 512
+	MaxRules           = 100
+	MaxActionsPerRule  = 20
 
 	MinActionTimeoutSeconds        = 1
 	DefaultActionTimeoutSeconds    = 30
 	MaxActionTimeoutSeconds        = 300
 	MinGraceSeconds                = 1
-	DefaultAppStopGraceSeconds     = 10
 	DefaultProcessStopGraceSeconds = 10
 	MaxGraceSeconds                = 120
 	CommandRunMaxOutputBytes       = 65536
@@ -45,21 +42,17 @@ const (
 
 	LastGoodConfig = "last-good-config.yml"
 
-	PauseStateVersion       = 1
-	LedgerVersion           = 1
-	PauseMinSeconds         = 60
-	PauseMaxSeconds         = 3600
-	PausePresetShortSeconds = 900
-	PausePresetLongSeconds  = 3600
-	MinLogRetainDays        = 1
-	DefaultLogRetainDays    = 14
-	MaxLogRetainDays        = 365
-	DefaultLogLevel         = "info"
-	LogRedactBearerPrefix   = "Bearer "
-	LogRedactTokenExpires   = "Token expires"
-	MCPWaitDelaySeconds     = 2
-	MCPStderrLimitBytes     = 4096
-	MCPMaxResponseBytes     = 1048576
+	PauseStateVersion     = 1
+	LedgerVersion         = 1
+	PauseMinSeconds       = 60
+	PauseMaxSeconds       = 3600
+	MinLogRetainDays      = 1
+	DefaultLogRetainDays  = 14
+	MaxLogRetainDays      = 365
+	DefaultLogLevel       = "info"
+	LogRedactBearerPrefix = "Bearer "
+	LogRedactTokenExpires = "Token expires"
+	MCPWaitDelaySeconds   = 2
 
 	InProgressLinePrefix = "- [In Progress] "
 	IDBlockDelimiter     = " [ID: "
@@ -80,7 +73,6 @@ const (
 	BrowserOwnerHeartbeatFileName          = "firefox-owner-heartbeat.json"
 	BrowserStateDirRelative                = "TCCLocalConnector/BrowserPolicy"
 	BrowserBackendHeartbeatIntervalSeconds = 5
-	BrowserFailurePolicy                   = "fail_open"
 	BrowserPolicyMaxDomains                = 128
 	BrowserDomainMaxBytes                  = 253
 	NativeMessageHeaderBytes               = 4

@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -395,10 +396,19 @@ func TestEngine_ReloadAndResumeRestoreEnsureWithoutWaitingInterval(t *testing.T)
 	configPath := filepath.Join(t.TempDir(), "config.yml")
 	writeEnsureConfig(t, configPath, fake, 3600)
 	policyPath := filepath.Join(t.TempDir(), constants.BrowserPolicyFileName)
+	// Why: Pause and LoadConfig emit from their own goroutines.
+	var plansMu sync.Mutex
 	var plans []rules.Plan
+	lastPlan := func() []rules.Plan {
+		plansMu.Lock()
+		defer plansMu.Unlock()
+		return append([]rules.Plan(nil), plans...)
+	}
 	engine := New(Deps{ConfigPath: configPath, BrowserPolicyPath: policyPath, Emit: func(event string, value any) {
 		if event == "plan" {
+			plansMu.Lock()
 			plans = append(plans, value.(rules.Plan))
+			plansMu.Unlock()
 		}
 	}})
 
@@ -410,8 +420,8 @@ func TestEngine_ReloadAndResumeRestoreEnsureWithoutWaitingInterval(t *testing.T)
 	if !afterReload.Enforce || !reflect.DeepEqual(afterReload.Domains, []string{"example.com"}) {
 		t.Fatalf("reload policy = %#v", afterReload)
 	}
-	if len(plans) == 0 || !reflect.DeepEqual(plans[len(plans)-1].EnforceStopBundleIDs, []string{"com.example.App"}) {
-		t.Fatalf("reload plans = %#v", plans)
+	if got := lastPlan(); len(got) == 0 || !reflect.DeepEqual(got[len(got)-1].EnforceStopBundleIDs, []string{"com.example.App"}) {
+		t.Fatalf("reload plans = %#v", got)
 	}
 
 	if err := engine.Pause(time.Now().Add(time.Minute)); err != nil {
@@ -421,7 +431,9 @@ func TestEngine_ReloadAndResumeRestoreEnsureWithoutWaitingInterval(t *testing.T)
 	if paused.Enforce || len(paused.Domains) != 0 {
 		t.Fatalf("paused policy = %#v", paused)
 	}
+	plansMu.Lock()
 	plans = nil
+	plansMu.Unlock()
 	if err := engine.Resume(); err != nil {
 		t.Fatal(err)
 	}
@@ -429,8 +441,8 @@ func TestEngine_ReloadAndResumeRestoreEnsureWithoutWaitingInterval(t *testing.T)
 	if !afterResume.Enforce || !reflect.DeepEqual(afterResume.Domains, []string{"example.com"}) {
 		t.Fatalf("resume policy = %#v", afterResume)
 	}
-	if len(plans) == 0 || !reflect.DeepEqual(plans[len(plans)-1].EnforceStopBundleIDs, []string{"com.example.App"}) {
-		t.Fatalf("resume plans = %#v", plans)
+	if got := lastPlan(); len(got) == 0 || !reflect.DeepEqual(got[len(got)-1].EnforceStopBundleIDs, []string{"com.example.App"}) {
+		t.Fatalf("resume plans = %#v", got)
 	}
 }
 
@@ -1102,10 +1114,11 @@ func TestDryRunProcessStartDoesNotWriteLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := ledger.NewManager(value)
-	status, err := manager.Start(context.Background(), ledger.StartSpec{ProcessID: "test-process", Executable: "/not/a/program"}, true)
-	if err != nil || status != "skipped" {
-		t.Fatalf("Start() = (%q, %v), want (skipped, nil)", status, err)
+	engine := New(Deps{})
+	engine.ledger = ledger.NewManager(value)
+	results := engine.executeBackendActionsForCycle(context.Background(), 0, []rules.PlannedAction{{ActionID: "1-1", Kind: "process.start", ProcessID: "test-process", Executable: "/not/a/program"}}, true, false)
+	if len(results) != 1 || results[0].Status != "skipped" {
+		t.Fatalf("results = %#v, want skipped", results)
 	}
 	if _, ok := value.Get("test-process"); ok {
 		t.Fatal("dry run wrote a ledger entry")
@@ -1767,7 +1780,7 @@ func TestSafetyGateForceTerminateNeverInvoked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := ledger.NewManager(value).Stop(context.Background(), "missing", time.Second, false)
+	result, err := ledger.NewManager(value).Stop(context.Background(), "missing", time.Second)
 	if err != nil || result.Status != "orphan_dropped" || result.SignalsSent != 0 {
 		t.Fatalf("Stop() = (%#v, %v), want no signal", result, err)
 	}

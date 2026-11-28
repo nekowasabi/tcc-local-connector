@@ -129,10 +129,11 @@ func TestOpen_Success(t *testing.T) {
 }
 
 func TestCall_ResponseTooLarge(t *testing.T) {
-	heavy := strings.Repeat("x", constants.MCPMaxResponseBytes+1)
+	heavy := strings.Repeat("x", maxResponseBytes+1)
 	resp := `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"` + heavy + `"}]}}
 `
-	_, err := readResponse(context.Background(), bufio.NewReader(strings.NewReader(resp)), 1)
+	s := &Session{output: bufio.NewReader(strings.NewReader(resp))}
+	_, err := s.read(context.Background(), 1)
 	if err == nil {
 		t.Fatal("expected oversized read error")
 	}

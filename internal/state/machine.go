@@ -21,15 +21,12 @@ type Transition struct {
 	State            State  `json:"state"`
 	Code             string `json:"code,omitempty"`
 	ReleaseControls  bool   `json:"release_controls"`
-	Reevaluate       bool   `json:"reevaluate"`
 	PersistenceError error  `json:"-"`
 	GraceJustExpired bool   `json:"-"`
 }
 type Machine struct {
 	mu           sync.RWMutex
 	state        State
-	failures     int
-	lastSuccess  time.Time
 	firstFailure time.Time
 	failurePath  string
 	savedFailure time.Time
@@ -62,15 +59,12 @@ func (m *Machine) Transition(event string, now time.Time, grace time.Duration) T
 			code = "recovered"
 		}
 		m.state = StateActive
-		m.failures = 0
-		m.lastSuccess = now
 		m.firstFailure = time.Time{}
 		m.expiryLogged = ""
 		next.Code = code
 	case "failure":
 		if m.state != StatePaused && m.state != StateConfigError {
 			m.state = StateDegraded
-			m.failures++
 			if m.firstFailure.IsZero() {
 				m.firstFailure = now
 			}
@@ -95,15 +89,11 @@ func (m *Machine) Transition(event string, now time.Time, grace time.Duration) T
 		if m.state == StatePaused {
 			m.state = StateFetching
 			next.Code = "resumed"
-			next.Reevaluate = true
 		}
 	case "reload_ok":
 		if m.state == StateConfigError {
 			m.state = StateFetching
-			next.Reevaluate = true
 		}
-	case "wake":
-		next.Reevaluate = true
 	}
 	if m.failurePath != "" && (event == "failure" || event == "success") && !m.savedFailure.Equal(m.firstFailure) {
 		if m.firstFailure.IsZero() {

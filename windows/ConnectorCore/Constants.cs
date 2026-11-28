@@ -9,7 +9,6 @@ public static class Constants
     };
     public const int FrontendMaxLineBytes = 262144;
     public const int MenuRefreshIntervalSeconds = 5;
-    public const int BackendRequestTimeoutSeconds = 30;
     public const int PausePresetShortSeconds = 900;
     public const int PausePresetLongSeconds = 3600;
     public const int PauseNextDayStartHour = 5;

@@ -77,13 +77,7 @@ func ParseTaskChuteText(text string, isError bool) (TaskChuteResult, error) {
 	}
 	return result, nil
 }
-func parseError(code string) *ParseError {
-	message := code
-	if len(message) > constants.MaxErrorMessageBytes {
-		message = message[:constants.MaxErrorMessageBytes]
-	}
-	return &ParseError{Code: code, Message: message}
-}
+func parseError(code string) *ParseError { return &ParseError{Code: code, Message: code} }
 func parseRunningTask(rest, date string) RunningTask {
 	task := RunningTask{Date: date}
 	rest, task.TaskID, task.Section, task.Project, task.Mode, task.Routine, task.Warnings = splitIDBlock(rest)

@@ -90,8 +90,8 @@ verify_w05_installation() {
   local temp_home manifest manifest_dir
   temp_home="$(mktemp -d)"
   trap 'rm -rf -- "${temp_home}"' RETURN
-  HOME="${temp_home}" bash scripts/install-native-hosts.sh --app dist/TCCLocalConnector.app
-  HOME="${temp_home}" bash scripts/install-native-hosts.sh --check --app dist/TCCLocalConnector.app
+  HOME="${temp_home}" bash scripts/install-firefox-native-host.sh --app dist/TCCLocalConnector.app
+  HOME="${temp_home}" bash scripts/install-firefox-native-host.sh --check --app dist/TCCLocalConnector.app
   manifest="${temp_home}/Library/Application Support/Mozilla/NativeMessagingHosts/jp.takets.tcc_local_connector.firefox.json"
   manifest_dir="$(dirname -- "${manifest}")"
   [[ "$(stat -f '%Lp' "${manifest}")" == "600" ]]
@@ -117,12 +117,12 @@ run_gate w01-config-rules go test ./internal/config ./internal/rules -race -coun
 run_gate w02-policy-engine go test ./internal/browserpolicy ./internal/engine -race -count=1
 run_gate w03-swift swift test --package-path macos
 run_gate w03-native-host go test ./cmd/tcc-firefox-native-host -race -count=1
-run_gate w04-node node --test firefox-extension/tests
+run_gate w04-node node --test firefox-extension/background.test.js
 run_gate w04-web-ext web-ext lint --source-dir firefox-extension --no-config-discovery
 run_gate w05-bundle bash scripts/make-app-bundle.sh
 run_gate w05-installation verify_w05_installation
 run_gate w06-schema-drift verify_schema_drift
-run_gate w06-shellcheck shellcheck scripts/verify-firefox-extension.sh scripts/make-app-bundle.sh scripts/install-native-hosts.sh scripts/install-firefox-native-host.sh scripts/uninstall-firefox-native-host.sh
+run_gate w06-shellcheck shellcheck scripts/verify-firefox-extension.sh scripts/make-app-bundle.sh scripts/install-firefox-native-host.sh scripts/uninstall-firefox-native-host.sh
 run_gate w06-go-regression go test ./... -race -count=1
 run_gate w06-docs-readme-esr rg -q 'Firefox ESR' README.md
 run_gate w06-docs-readme-config rg -q 'config\.yml' README.md

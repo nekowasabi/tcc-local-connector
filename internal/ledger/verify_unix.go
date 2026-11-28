@@ -31,10 +31,6 @@ func processIdentity(ctx context.Context, pid int) (string, string, bool, error)
 	if line == "" {
 		return "", "", false, nil
 	}
-	index := strings.Index(line, " ")
-	for index >= 0 && index < len(line)-1 && strings.TrimSpace(line[:index]) == "" {
-		index++
-	}
 	fields := strings.Fields(line)
 	if len(fields) < 6 {
 		return "", "", false, nil

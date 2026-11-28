@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/takets/tcc-local-connector/internal/constants"
@@ -30,6 +31,21 @@ func TestValidateDefaultOnTaskStartNormalizesAndPreservesCompatibility(t *testin
 	}
 	if got := cfg.Default.OnTaskStart[0].TimeoutSeconds; got != constants.DefaultActionTimeoutSeconds {
 		t.Fatalf("default timeout = %d, want %d", got, constants.DefaultActionTimeoutSeconds)
+	}
+}
+
+func TestValidateRuleCountReportsRulesPath(t *testing.T) {
+	cfg := defaults()
+	cfg.TaskSource.Executable = "/bin/echo"
+	cfg.Rules = make([]Rule, constants.MaxRules+1)
+	_, errs := Validate(&cfg)
+	for _, err := range errs {
+		if err.Path == "logging.retain_days" {
+			t.Fatalf("rule count reported as logging.retain_days: %#v", errs)
+		}
+	}
+	if !slices.ContainsFunc(errs, func(err ValidationError) bool { return err.Path == "rules" }) {
+		t.Fatalf("missing rules error: %#v", errs)
 	}
 }
 

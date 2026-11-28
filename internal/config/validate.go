@@ -87,8 +87,11 @@ func Validate(cfg *Config) (*Config, []ValidationError) {
 	if !oneOf(cfg.Logging.Level, "debug", "info", "warn", "error") {
 		errors = append(errors, validation(codeUnsupportedValue, "logging.level"))
 	}
-	if outOfRange(cfg.Logging.RetainDays, constants.MinLogRetainDays, constants.MaxLogRetainDays) || len(cfg.Rules) > constants.MaxRules {
+	if outOfRange(cfg.Logging.RetainDays, constants.MinLogRetainDays, constants.MaxLogRetainDays) {
 		errors = append(errors, validation(codeValueOutOfRange, "logging.retain_days"))
+	}
+	if len(cfg.Rules) > constants.MaxRules {
+		errors = append(errors, validation(codeValueOutOfRange, "rules"))
 	}
 	if cfg.Default.OnTaskStart == nil {
 		cfg.Default.OnTaskStart = []Action{}

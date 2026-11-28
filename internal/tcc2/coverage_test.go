@@ -50,31 +50,6 @@ func TestParseHelpersAndUser(t *testing.T) {
 	}
 }
 
-func TestProbeHelpersAndVersion(t *testing.T) {
-	if _, err := Probe(context.Background(), ""); err == nil {
-		t.Fatal("empty executable accepted")
-	}
-	var b limitedBuffer
-	payload := strings.Repeat("x", 5000)
-	if n, err := b.Write([]byte(payload)); err != nil || n != len(payload) || b.Len() != 4096 || len(b.String()) != 4096 {
-		t.Fatalf("buffer n=%d err=%v len=%d", n, err, b.Len())
-	}
-}
-
-func TestReadResponseErrorsAndEOF(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := readResponse(ctx, bufio.NewReader(strings.NewReader("")), 1); err == nil {
-		t.Fatal("cancel not observed")
-	}
-	if _, err := readResponse(context.Background(), bufio.NewReader(strings.NewReader("not json\n")), 1); err == nil {
-		t.Fatal("invalid JSON accepted")
-	}
-	if _, err := readResponse(context.Background(), bufio.NewReader(strings.NewReader(`{"jsonrpc":"2.0","id":1}`+"\n")), 1); err == nil {
-		t.Fatal("null result accepted")
-	}
-}
-
 func TestSessionRequestCallAndJoinText(t *testing.T) {
 	inReader, inWriter := io.Pipe()
 	outReader, outWriter := io.Pipe()
@@ -111,46 +86,12 @@ func TestTaskchuteErrorPaths(t *testing.T) {
 	}
 }
 
-func TestProbeSuccessAndExitFailure(t *testing.T) {
-	script := filepath.Join(t.TempDir(), "fake-tcc2")
-	program := `#!/bin/sh
-read line
-printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","serverInfo":{"name":"fake","version":"1.0"}}}'
-read line
-read line
-printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"get_taskchute"},{"name":"other"}]}}'
-exit ${FAKE_EXIT:-0}
-`
-	if err := os.WriteFile(script, []byte(program), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := Probe(context.Background(), script); err != nil || got.ServerName != "fake" || got.ToolCount != 2 || !got.HasGetTaskChute || !got.ProcessExitClean {
-		t.Fatalf("Probe success = %#v %v", got, err)
-	}
-}
-
-func TestProbeRejectsMalformedAndMCPError(t *testing.T) {
-	for _, response := range []string{"not-json", `{"jsonrpc":"2.0","id":1,"error":{"code":-1}}`} {
-		script := filepath.Join(t.TempDir(), "fake-tcc2")
-		program := "#!/bin/sh\nread line\nprintf '%s\\n' '" + response + "'\n"
-		if err := os.WriteFile(script, []byte(program), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := Probe(context.Background(), script); err == nil {
-			t.Fatalf("Probe accepted %q", response)
-		}
-	}
-}
-
 func TestReadBoundedLineBranches(t *testing.T) {
 	if got, err := readBoundedLine(bufio.NewReader(strings.NewReader("abc")), 10); err != nil || string(got) != "abc" {
 		t.Fatalf("EOF line = %q %v", got, err)
 	}
 	if _, err := readBoundedLine(bufio.NewReader(strings.NewReader(strings.Repeat("x", 20)+"\n")), 10); err == nil {
 		t.Fatal("oversized line accepted")
-	}
-	if _, err := readResponse(context.Background(), bufio.NewReader(strings.NewReader(`{"jsonrpc":"2.0","id":2,"result":{}}`+"\n")), 1); err == nil {
-		t.Fatal("unexpected response id accepted")
 	}
 }
 

@@ -259,7 +259,7 @@ func TestBuildPlan_NoUnsupportedActions(t *testing.T) {
 	}
 }
 
-func TestBuildPlanWithDefault_SequencesPhasesWithoutCrossPhaseDedupe(t *testing.T) {
+func TestBuildPlanWithLifecycle_DefaultSequencesPhasesWithoutCrossPhaseDedupe(t *testing.T) {
 	defaultActions := []config.Action{
 		{Type: "notify", Title: "first", Message: "default"},
 		{Type: "process.start", ProcessID: "worker", Executable: "/bin/echo"},
@@ -272,7 +272,7 @@ func TestBuildPlanWithDefault_SequencesPhasesWithoutCrossPhaseDedupe(t *testing.
 		}}},
 	}
 
-	plan, conflicts := BuildPlanWithDefault(9, defaultActions, Evaluation{}, current)
+	plan, conflicts := BuildPlanWithLifecycle(9, defaultActions, nil, Evaluation{}, current)
 	if len(conflicts) != 0 || len(plan.Actions) != 4 {
 		t.Fatalf("plan=%#v conflicts=%#v", plan, conflicts)
 	}
@@ -352,11 +352,11 @@ func TestBuildPlanWithLifecycle_SkipsBrowserBlockInStop(t *testing.T) {
 	}
 }
 
-func TestBuildPlanWithDefault_SkipsBrowserBlock(t *testing.T) {
-	plan, _ := BuildPlanWithDefault(1, []config.Action{
+func TestBuildPlanWithLifecycle_DefaultSkipsBrowserBlock(t *testing.T) {
+	plan, _ := BuildPlanWithLifecycle(1, []config.Action{
 		{Type: "browser.block", Domains: []string{"example.com"}},
 		{Type: "notify", Title: "hello", Message: "world"},
-	}, Evaluation{}, Evaluation{})
+	}, nil, Evaluation{}, Evaluation{})
 	if len(plan.Actions) != 1 || plan.Actions[0].Kind != "notify" || plan.Actions[0].Phase != "default" {
 		t.Fatalf("actions=%#v", plan.Actions)
 	}

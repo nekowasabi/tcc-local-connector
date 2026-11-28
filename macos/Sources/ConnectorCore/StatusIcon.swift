@@ -4,7 +4,6 @@ public enum StatusIcon {
 		case .starting: return "clock"
 		case .running: return "checklist"
 		case .backendDown: return "exclamationmark.triangle"
-		case .backendDownPermanent: return "xmark.octagon"
 		case .backendIncompatible: return "exclamationmark.arrow.triangle.2.circlepath"
 		case .terminated: return "power"
 		}
@@ -15,7 +14,6 @@ public enum StatusIcon {
         case .starting: return "時計"
         case .running: return "チェック"
         case .backendDown: return "警告"
-        case .backendDownPermanent: return "停止"
         case .backendIncompatible: return "互換性なし"
         case .terminated: return "終了"
         }
